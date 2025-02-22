@@ -1,23 +1,22 @@
 package cmd
 
 import (
-	"clipack/config"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 )
 
-var cfg config.Config
-
 var rootCmd = &cobra.Command{
 	Use:   "clipack",
-	Short: "Clipack is a tool for managing applications",
+	Short: "Clipack is a command-line package manager for installing and managing CLI tools and configurations.",
+	Long: `Clipack is a command-line package manager for installing
+and managing CLI tools and configurations.`,
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println("Error executing root command:", err)
+		fmt.Println(err)
 		os.Exit(1)
 	}
 }
@@ -27,5 +26,5 @@ func init() {
 }
 
 func initConfig() {
-	cfg = config.InitConfig()
+	// Here you can initialize your config if needed
 }

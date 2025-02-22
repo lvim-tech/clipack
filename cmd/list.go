@@ -3,13 +3,15 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/spf13/cobra"
 )
 
-var forceRefresh bool
+var forceRefreshInList bool
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -27,8 +29,15 @@ var listCmd = &cobra.Command{
 		}
 
 		var packages []*pkg.Package
-		if forceRefresh {
+		if forceRefreshInList {
 			fmt.Println("Forcing refresh of the registry cache...")
+
+			// Изтриваме кеш файловете
+			cachePath := pkg.GetCacheFilePath()
+			os.Remove(cachePath)
+			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
+			os.Remove(timestampPath)
+
 			packages, err = pkg.LoadAllPackagesFromRegistry(config)
 			if err != nil {
 				log.Fatalf("Error loading packages from registry: %v", err)
@@ -88,6 +97,6 @@ var listCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVarP(&forceRefresh, "force-refresh", "f", false, "Force refresh of the registry cache")
+	listCmd.Flags().BoolVarP(&forceRefreshInList, "force-refresh", "f", false, "Force refresh of the registry cache")
 	rootCmd.AddCommand(listCmd)
 }

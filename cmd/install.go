@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var forceRefresh bool
+
 var installCmd = &cobra.Command{
 	Use:   "install [package-name]",
 	Short: "Install a package from registry",
@@ -35,6 +37,13 @@ var installCmd = &cobra.Command{
 
 			if forceRefresh {
 				fmt.Println("Forcing refresh of the registry cache...")
+
+				// Изтриваме кеш файловете
+				cachePath := pkg.GetCacheFilePath(config)
+				os.Remove(cachePath)
+				timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
+				os.Remove(timestampPath)
+
 				packages, err = pkg.LoadAllPackagesFromRegistry(config)
 				if err != nil {
 					log.Fatalf("Error loading packages: %v", err)
@@ -49,7 +58,7 @@ var installCmd = &cobra.Command{
 				}
 			} else {
 				// Първо се опитваме да заредим от кеша
-				cachePath := pkg.GetCacheFilePath()
+				cachePath := pkg.GetCacheFilePath(config)
 				if _, err := os.Stat(cachePath); os.IsNotExist(err) {
 					fmt.Println("Cache not found. Fetching packages from registry...")
 					packages, err = pkg.LoadAllPackagesFromRegistry(config)
@@ -206,7 +215,7 @@ var installCmd = &cobra.Command{
 			}
 		}
 
-		// Преместваме бинарните файлове
+		// Премахваме съществуващите файлове и копираме новите бинарни файлове
 		for _, binPath := range selectedPackage.Install.Binaries {
 			srcPath := filepath.Join(buildDir, binPath)
 			dstPath := filepath.Join(binDir, filepath.Base(binPath))
@@ -216,9 +225,9 @@ var installCmd = &cobra.Command{
 					log.Printf("Error removing existing binary %s: %v", dstPath, err)
 				}
 			}
-			fmt.Printf("Moving binary %s to %s\n", binPath, dstPath)
-			if err := os.Rename(srcPath, dstPath); err != nil {
-				log.Printf("Error moving binary %s: %v", binPath, err)
+			fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
+			if err := pkg.CopyFile(srcPath, dstPath); err != nil {
+				log.Printf("Error copying binary %s: %v", binPath, err)
 			}
 			// Правим файла изпълним
 			if err := os.Chmod(dstPath, 0755); err != nil {
@@ -242,28 +251,6 @@ var installCmd = &cobra.Command{
 				log.Printf("Warning: could not copy config %s: %v", confPath, err)
 			} else {
 				fmt.Printf("Copied config %s to %s\n", confPath, dstPath)
-			}
-
-			// Създаваме символна връзка в home директорията
-			home, err := os.UserHomeDir()
-			if err != nil {
-				log.Printf("Warning: could not get home directory: %v", err)
-				continue
-			}
-
-			linkPath := filepath.Join(home, filepath.Base(confPath))
-			if _, err := os.Lstat(linkPath); err == nil {
-				if pkg.AskForConfirmation(fmt.Sprintf("Config file %s already exists. Replace it?", linkPath)) {
-					os.Remove(linkPath)
-				} else {
-					continue
-				}
-			}
-
-			if err := os.Symlink(dstPath, linkPath); err != nil {
-				log.Printf("Warning: could not create symlink for %s: %v", confPath, err)
-			} else {
-				fmt.Printf("Created symlink: %s -> %s\n", linkPath, dstPath)
 			}
 		}
 

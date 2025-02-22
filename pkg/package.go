@@ -104,7 +104,32 @@ func LoadPackageFromReader(r io.Reader) (*Package, error) {
 	return &pkg, nil
 }
 
-func GetCacheFilePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cache", "clipack", "packages.json")
+// CopyFile копира файл от src в dst
+func CopyFile(src, dst string) error {
+	sourceFileStat, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if !sourceFileStat.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", src)
+	}
+
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	destination, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
+
+	if _, err := io.Copy(destination, source); err != nil {
+		return err
+	}
+
+	return nil
 }

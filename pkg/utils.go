@@ -29,21 +29,6 @@ func AskForConfirmation(s string) bool {
 	}
 }
 
-// CopyFile копира файл от src в dst
-func CopyFile(src, dst string) error {
-	input, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(dst, input, 0644)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // EnsureDirectoryExists създава директория ако не съществува
 func EnsureDirectoryExists(path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {

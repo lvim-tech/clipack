@@ -168,7 +168,7 @@ options:
 	}
 
 	if AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
-		if err := addPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
+		if err := AddPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
 			return fmt.Errorf("could not add paths to shell configuration: %v", err)
 		}
 	}
@@ -236,7 +236,7 @@ options:
 	fmt.Printf("Configuration updated at: %s\n", configPath)
 
 	if AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
-		if err := addPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
+		if err := AddPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
 			return fmt.Errorf("could not add paths to shell configuration: %v", err)
 		}
 	}
@@ -281,24 +281,10 @@ func AskInstallDirectory() (string, error) {
 	return installDir, nil
 }
 
-func addPathsToShellConfig(binPath, manPath string) error {
-	usr, err := user.Current()
+func AddPathsToShellConfig(binPath, manPath string) error {
+	configFilePath, err := GetShellConfigFilePath()
 	if err != nil {
-		return fmt.Errorf("could not get current user: %v", err)
-	}
-
-	shell := filepath.Base(os.Getenv("SHELL"))
-
-	var configFilePath string
-	switch shell {
-	case "bash":
-		configFilePath = filepath.Join(usr.HomeDir, ".bashrc")
-	case "zsh":
-		configFilePath = filepath.Join(usr.HomeDir, ".zshrc")
-	case "fish":
-		configFilePath = filepath.Join(usr.HomeDir, ".config", "fish", "config.fish")
-	default:
-		return fmt.Errorf("unsupported shell: %s", shell)
+		return fmt.Errorf("could not determine shell config file path: %v", err)
 	}
 
 	configFile, err := os.OpenFile(configFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
@@ -306,6 +292,8 @@ func addPathsToShellConfig(binPath, manPath string) error {
 		return fmt.Errorf("could not open shell config file: %v", err)
 	}
 	defer configFile.Close()
+
+	shell := filepath.Base(os.Getenv("SHELL"))
 
 	switch shell {
 	case "bash", "zsh":
@@ -320,4 +308,27 @@ func addPathsToShellConfig(binPath, manPath string) error {
 
 	fmt.Printf("Paths added to %s\n", configFilePath)
 	return nil
+}
+
+func GetShellConfigFilePath() (string, error) {
+	usr, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("could not get current user: %v", err)
+	}
+
+	shell := filepath.Base(os.Getenv("SHELL"))
+
+	var configFilePath string
+	switch shell {
+	case "bash":
+		configFilePath = filepath.Join(usr.HomeDir, ".bashrc")
+	case "zsh":
+		configFilePath = filepath.Join(usr.HomeDir, ".zshrc")
+	case "fish":
+		configFilePath = filepath.Join(usr.HomeDir, ".config", "fish", "config.fish")
+	default:
+		return "", fmt.Errorf("unsupported shell: %s", shell)
+	}
+
+	return configFilePath, nil
 }

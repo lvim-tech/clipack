@@ -33,16 +33,16 @@ var listCmd = &cobra.Command{
 			fmt.Println("Forcing refresh of the registry cache...")
 
 			// Изтриваме кеш файловете
-			cachePath := pkg.GetCacheFilePath()
+			cachePath := pkg.GetCacheFilePath(config)
 			os.Remove(cachePath)
 			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
 			os.Remove(timestampPath)
 
 			packages, err = pkg.LoadAllPackagesFromRegistry(config)
 			if err != nil {
-				log.Fatalf("Error loading packages from registry: %v", err)
+				log.Fatalf("Error loading packages: %v", err)
 			}
-			fmt.Println("Packages loaded from registry:", packages)
+			fmt.Println(packages)
 
 			// Запазваме в кеша
 			if err := pkg.SaveToCache(packages, config); err != nil {

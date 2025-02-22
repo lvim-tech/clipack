@@ -133,3 +133,34 @@ func CopyFile(src, dst string) error {
 
 	return nil
 }
+
+// LoadInstalledPackages зарежда инсталираните пакети от конфигурационната директория
+func LoadInstalledPackages(config *Config) ([]*Package, error) {
+	installedDir := config.Paths.Configs
+	entries, err := os.ReadDir(installedDir)
+	if err != nil {
+		return nil, fmt.Errorf("error reading installed directory: %v", err)
+	}
+
+	var packages []*Package
+	for _, entry := range entries {
+		if entry.IsDir() {
+			packageFile := filepath.Join(installedDir, entry.Name(), "package.yaml")
+			data, err := os.ReadFile(packageFile)
+			if err != nil {
+				fmt.Printf("Warning: error reading %s: %v\n", packageFile, err)
+				continue
+			}
+
+			pkg, err := LoadPackageFromBytes(data)
+			if err != nil {
+				fmt.Printf("Warning: error parsing %s: %v\n", packageFile, err)
+				continue
+			}
+
+			packages = append(packages, pkg)
+		}
+	}
+
+	return packages, nil
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var forceRefresh bool
@@ -280,6 +281,16 @@ var installCmd = &cobra.Command{
 			} else {
 				fmt.Printf("Created additional config %s\n", dstPath)
 			}
+		}
+
+		// Записваме информация за пакета в конфигурационната директория
+		packageConfigPath := filepath.Join(configDir, "package.yaml")
+		packageData, err := yaml.Marshal(selectedPackage)
+		if err != nil {
+			log.Fatalf("Error marshaling package data: %v", err)
+		}
+		if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
+			log.Fatalf("Error writing package config file: %v", err)
 		}
 
 		// Изпълняваме post-install скриптове

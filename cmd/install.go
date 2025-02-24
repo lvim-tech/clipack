@@ -45,7 +45,6 @@ var installCmd = &cobra.Command{
 			if err != nil {
 				log.Fatalf("Error loading packages: %v", err)
 			}
-			fmt.Println(packages)
 
 			if err := pkg.SaveToCache(packages, config); err != nil {
 				log.Printf("Warning: could not cache packages: %v", err)
@@ -236,7 +235,24 @@ var installCmd = &cobra.Command{
 
 		for _, manPage := range selectedPackage.Install.Man {
 			srcPath := filepath.Join(buildDir, manPage)
-			dstPath := filepath.Join(manDir, filepath.Base(manPage))
+
+			// Извличане на разширението (пример: .1, .2, .3)
+			ext := filepath.Ext(manPage) // Взима последното разширение, напр. ".1"
+			if len(ext) < 2 {            // Ако разширението е твърде кратко, пропускаме
+				log.Printf("Warning: could not determine section for %s", manPage)
+				continue
+			}
+
+			section := "man" + ext[1:] // Пример: .1 -> "man1"
+			sectionDir := filepath.Join(manDir, section)
+
+			// Създаваме директорията, ако не съществува
+			if err := os.MkdirAll(sectionDir, 0755); err != nil {
+				log.Printf("Error creating man section directory %s: %v", sectionDir, err)
+				continue
+			}
+
+			dstPath := filepath.Join(sectionDir, filepath.Base(manPage))
 
 			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 				log.Printf("Warning: man page %s does not exist", srcPath)

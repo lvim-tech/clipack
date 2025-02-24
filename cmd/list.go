@@ -40,7 +40,6 @@ var listCmd = &cobra.Command{
 			if err != nil {
 				log.Fatalf("Error loading packages: %v", err)
 			}
-			fmt.Println(packages)
 
 			if err := pkg.SaveToCache(packages, config); err != nil {
 				log.Printf("Warning: could not cache packages: %v", err)

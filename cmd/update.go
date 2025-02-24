@@ -38,7 +38,7 @@ var updateCmd = &cobra.Command{
 			// Изтриваме кеш файловете
 			cachePath := pkg.GetCacheFilePath(config)
 			os.Remove(cachePath)
-			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
+			timestampPath := pkg.GetCacheTimestampFilePath(config)
 			os.Remove(timestampPath)
 
 			packages, err = pkg.LoadAllPackagesFromRegistry(config)

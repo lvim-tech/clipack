@@ -236,17 +236,15 @@ var installCmd = &cobra.Command{
 		for _, manPage := range selectedPackage.Install.Man {
 			srcPath := filepath.Join(buildDir, manPage)
 
-			// Извличане на разширението (пример: .1, .2, .3)
-			ext := filepath.Ext(manPage) // Взима последното разширение, напр. ".1"
-			if len(ext) < 2 {            // Ако разширението е твърде кратко, пропускаме
+			ext := filepath.Ext(manPage)
+			if len(ext) < 2 {
 				log.Printf("Warning: could not determine section for %s", manPage)
 				continue
 			}
 
-			section := "man" + ext[1:] // Пример: .1 -> "man1"
+			section := "man" + ext[1:]
 			sectionDir := filepath.Join(manDir, section)
 
-			// Създаваме директорията, ако не съществува
 			if err := os.MkdirAll(sectionDir, 0755); err != nil {
 				log.Printf("Error creating man section directory %s: %v", sectionDir, err)
 				continue

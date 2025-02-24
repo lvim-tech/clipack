@@ -129,13 +129,13 @@ func removePackage(selectedPackage *pkg.Package, config *cnfg.Config) {
 	}
 
 	for _, manPage := range selectedPackage.Install.Man {
-		ext := filepath.Ext(manPage) // Взима разширението, напр. ".1"
+		ext := filepath.Ext(manPage)
 		if len(ext) < 2 {
 			log.Printf("Warning: could not determine section for %s", manPage)
 			continue
 		}
 
-		section := "man" + ext[1:] // Пример: .1 -> "man1"
+		section := "man" + ext[1:]
 		sectionDir := filepath.Join(config.Paths.Man, section)
 		existingManFile := filepath.Join(sectionDir, filepath.Base(manPage))
 

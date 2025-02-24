@@ -145,7 +145,6 @@ func CreateDefaultConfig() error {
 		return fmt.Errorf("could not get installation directory: %v", err)
 	}
 
-
 	config := fmt.Sprintf(`# Clipack configuration file
 
 registry:

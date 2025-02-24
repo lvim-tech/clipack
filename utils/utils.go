@@ -1,4 +1,4 @@
-package pkg
+package utils
 
 import (
 	"bufio"
@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// AskForConfirmation пита потребителя за потвърждение
 func AskForConfirmation(s string) bool {
 	reader := bufio.NewReader(os.Stdin)
 
@@ -29,10 +28,11 @@ func AskForConfirmation(s string) bool {
 	}
 }
 
-// EnsureDirectoryExists създава директория ако не съществува
+
 func EnsureDirectoryExists(path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return os.MkdirAll(path, 0755)
 	}
 	return nil
 }
+

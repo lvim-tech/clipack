@@ -1,16 +1,24 @@
-package pkg
+package cnfg
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/lvim-tech/clipack/utils"
+	"fmt"
+
 	"gopkg.in/yaml.v3"
+
+	"github.com/spf13/viper"
 )
+
+type ConfigInit struct {
+	InstallPath string
+}
 
 type RegistryConfig struct {
 	URL            string        `yaml:"url"`
@@ -37,6 +45,38 @@ type Config struct {
 	Registry RegistryConfig `yaml:"registry"`
 	Paths    PathsConfig    `yaml:"paths"`
 	Options  OptionsConfig  `yaml:"options"`
+}
+
+func InitConfig() ConfigInit {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(fmt.Errorf("failed to get user home directory: %w", err))
+	}
+
+	configDir := filepath.Join(home, ".config", "clipack")
+	if err := os.MkdirAll(configDir, os.ModePerm); err != nil {
+		panic(fmt.Errorf("failed to create config directory: %w", err))
+	}
+
+	configFile := filepath.Join(configDir, "config.yaml")
+	viper.SetConfigFile(configFile)
+	viper.SetConfigType("yaml")
+
+	viper.SetDefault("install_path", filepath.Join(home, "clipack_apps"))
+
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		if err := viper.WriteConfigAs(configFile); err != nil {
+			panic(fmt.Errorf("failed to write config file: %w", err))
+		}
+	} else {
+		if err := viper.ReadInConfig(); err != nil {
+			panic(fmt.Errorf("failed to read config file: %w", err))
+		}
+	}
+
+	return ConfigInit{
+		InstallPath: viper.GetString("install_path"),
+	}
 }
 
 func LoadConfig() (*Config, error) {
@@ -96,9 +136,8 @@ func CreateDefaultConfig() error {
 
 	configPath := filepath.Join(configDir, "config.yaml")
 
-	// Проверяваме дали конфигурационният файл вече съществува
 	if _, err := os.Stat(configPath); err == nil {
-		return nil // Файлът вече съществува
+		return nil
 	}
 
 	installDir, err := AskInstallDirectory()
@@ -106,11 +145,8 @@ func CreateDefaultConfig() error {
 		return fmt.Errorf("could not get installation directory: %v", err)
 	}
 
-	currentUser, currentTime := GetCurrentUserAndTime()
 
 	config := fmt.Sprintf(`# Clipack configuration file
-# Created: %s
-# User: %s
 
 registry:
   url: https://github.com/lvim-tech/clipack-registry.git
@@ -118,9 +154,7 @@ registry:
   update_interval: 24h
 
 paths:
-  # Base installation directory
   base: %s
-  # Other paths as absolute paths
   registry: %s
   bin: %s
   configs: %s
@@ -132,8 +166,6 @@ options:
   backup_configs: true
   cleanup_build: true
 `,
-		currentTime,
-		currentUser,
 		installDir,
 		filepath.Join(installDir, "registry"),
 		filepath.Join(installDir, "bin"),
@@ -145,7 +177,6 @@ options:
 		return fmt.Errorf("could not write config file: %v", err)
 	}
 
-	// Създаваме необходимите директории
 	dirs := []string{
 		filepath.Join(installDir, "registry"),
 		filepath.Join(installDir, "bin"),
@@ -167,7 +198,7 @@ options:
 		fmt.Printf("- %s\n", dir)
 	}
 
-	if AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
+	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
 		if err := AddPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
 			return fmt.Errorf("could not add paths to shell configuration: %v", err)
 		}
@@ -194,11 +225,7 @@ func UpdateConfig() error {
 		return fmt.Errorf("could not get installation directory: %v", err)
 	}
 
-	currentUser, currentTime := GetCurrentUserAndTime()
-
 	config := fmt.Sprintf(`# Clipack configuration file
-# Updated: %s
-# User: %s
 
 registry:
   url: https://github.com/lvim-tech/clipack-registry.git
@@ -206,9 +233,7 @@ registry:
   update_interval: 24h
 
 paths:
-  # Base installation directory
   base: %s
-  # Other paths as absolute paths
   registry: %s
   bin: %s
   configs: %s
@@ -220,8 +245,6 @@ options:
   backup_configs: true
   cleanup_build: true
 `,
-		currentTime,
-		currentUser,
 		installDir,
 		filepath.Join(installDir, "registry"),
 		filepath.Join(installDir, "bin"),
@@ -235,7 +258,7 @@ options:
 
 	fmt.Printf("Configuration updated at: %s\n", configPath)
 
-	if AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
+	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
 		if err := AddPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
 			return fmt.Errorf("could not add paths to shell configuration: %v", err)
 		}
@@ -246,7 +269,7 @@ options:
 
 func GetCurrentUserAndTime() (string, string) {
 	currentTime := time.Now().UTC().Format("2006-01-02 15:04:05")
-	currentUser := "lvim-tech" // Specified username
+	currentUser := "lvim-tech"
 	return currentUser, currentTime
 }
 
@@ -332,3 +355,4 @@ func GetShellConfigFilePath() (string, error) {
 
 	return configFilePath, nil
 }
+

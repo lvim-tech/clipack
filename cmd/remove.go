@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lvim-tech/clipack/cnfg"
+	"github.com/lvim-tech/clipack/utils"
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/spf13/cobra"
 )
@@ -15,13 +17,11 @@ var removeCmd = &cobra.Command{
 	Use:   "remove [package-name]",
 	Short: "Remove an installed package",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Създаваме конфигурационния файл, ако не съществува
-		if err := pkg.CreateDefaultConfig(); err != nil {
+		if err := cnfg.CreateDefaultConfig(); err != nil {
 			log.Fatalf("Error creating config file: %v", err)
 		}
 
-		// Зареждаме конфигурацията
-		config, err := pkg.LoadConfig()
+		config, err := cnfg.LoadConfig()
 		if err != nil {
 			log.Fatalf("Error loading config: %v", err)
 		}
@@ -32,7 +32,6 @@ var removeCmd = &cobra.Command{
 		}
 
 		if len(args) == 0 {
-			// Ако няма предоставено име на пакет, листваме всички инсталирани пакети
 			fmt.Println("\nInstalled packages:")
 			fmt.Println("-------------------")
 			for i, p := range installedPackages {
@@ -70,14 +69,13 @@ var removeCmd = &cobra.Command{
 		fmt.Printf("Tags: %s\n", strings.Join(selectedPackage.Tags, ", "))
 		fmt.Printf("Updated: %s\n\n", selectedPackage.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-		if !pkg.AskForConfirmation("Proceed with removal?") {
+		if !utils.AskForConfirmation("Proceed with removal?") {
 			fmt.Println("Removal cancelled.")
 			return
 		}
 
 		fmt.Println("\nRemoving package:", selectedPackage.Name)
 
-		// Премахваме конфигурационните файлове
 		existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
 		if err := os.RemoveAll(existingConfigDir); err != nil {
 			log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
@@ -85,7 +83,6 @@ var removeCmd = &cobra.Command{
 			fmt.Printf("Removed config directory %s\n", existingConfigDir)
 		}
 
-		// Премахваме бинарните файлове
 		for _, binPath := range selectedPackage.Install.Binaries {
 			existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
 			if err := os.Remove(existingBinFile); err != nil {
@@ -95,7 +92,6 @@ var removeCmd = &cobra.Command{
 			}
 		}
 
-		// Премахваме man страниците
 		for _, manPage := range selectedPackage.Install.Man {
 			existingManFile := filepath.Join(config.Paths.Man, filepath.Base(manPage))
 			if err := os.Remove(existingManFile); err != nil {
@@ -105,7 +101,6 @@ var removeCmd = &cobra.Command{
 			}
 		}
 
-		// Премахваме файловете от post-install скриптовете
 		for _, script := range selectedPackage.PostInstall.Scripts {
 			scriptPath := filepath.Join(config.Paths.Bin, script.Filename)
 			if err := os.Remove(scriptPath); err != nil {

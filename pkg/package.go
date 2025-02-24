@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lvim-tech/clipack/cnfg"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,7 +53,6 @@ type Package struct {
 	PostInstall PostInstall `yaml:"post-install,omitempty"`
 }
 
-// LoadAllPackagesFromDir зарежда всички пакети от локална директория
 func LoadAllPackagesFromDir(registryDir string) ([]*Package, error) {
 	if _, err := os.Stat(registryDir); os.IsNotExist(err) {
 		return nil, fmt.Errorf("registry directory does not exist: %v", err)
@@ -85,7 +85,6 @@ func LoadAllPackagesFromDir(registryDir string) ([]*Package, error) {
 	return packages, nil
 }
 
-// LoadPackageFromBytes зарежда пакет от YAML bytes
 func LoadPackageFromBytes(data []byte) (*Package, error) {
 	var pkg Package
 	if err := yaml.Unmarshal(data, &pkg); err != nil {
@@ -94,7 +93,6 @@ func LoadPackageFromBytes(data []byte) (*Package, error) {
 	return &pkg, nil
 }
 
-// LoadPackageFromReader зарежда пакет от io.Reader
 func LoadPackageFromReader(r io.Reader) (*Package, error) {
 	var pkg Package
 	decoder := yaml.NewDecoder(r)
@@ -104,7 +102,6 @@ func LoadPackageFromReader(r io.Reader) (*Package, error) {
 	return &pkg, nil
 }
 
-// CopyFile копира файл от src в dst
 func CopyFile(src, dst string) error {
 	sourceFileStat, err := os.Stat(src)
 	if err != nil {
@@ -134,8 +131,7 @@ func CopyFile(src, dst string) error {
 	return nil
 }
 
-// LoadInstalledPackages зарежда инсталираните пакети от конфигурационната директория
-func LoadInstalledPackages(config *Config) ([]*Package, error) {
+func LoadInstalledPackages(config *cnfg.Config) ([]*Package, error) {
 	installedDir := config.Paths.Configs
 	entries, err := os.ReadDir(installedDir)
 	if err != nil {

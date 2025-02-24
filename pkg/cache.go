@@ -8,16 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"github.com/lvim-tech/clipack/cnfg"
 )
 
-// PackageCache структура за кеширане на пакети
 type PackageCache struct {
 	Packages    []*Package
 	LastUpdated time.Time
 }
 
-// GetCacheFilePath връща пътя към кеш файла
-func GetCacheFilePath(config *Config) string {
+func GetCacheFilePath(config *cnfg.Config) string {
 	cacheDir := filepath.Join(config.Paths.Registry)
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		log.Fatalf("Error creating cache directory: %v", err)
@@ -25,17 +24,14 @@ func GetCacheFilePath(config *Config) string {
 	return filepath.Join(cacheDir, "packages_cache.gob")
 }
 
-// GetCacheTimestampFilePath връща пътя към файла с времеви отпечатък на кеша
-func GetCacheTimestampFilePath(config *Config) string {
+func GetCacheTimestampFilePath(config *cnfg.Config) string {
 	return filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
 }
 
-// LoadFromCache зарежда пакетите от кеша
-func LoadFromCache(config *Config) ([]*Package, error) {
+func LoadFromCache(config *cnfg.Config) ([]*Package, error) {
 	cacheFilePath := GetCacheFilePath(config)
 	timestampFilePath := GetCacheTimestampFilePath(config)
 
-	// Проверка за валидност на кеша чрез времеви отпечатък
 	timestamp, err := loadTimestamp(timestampFilePath)
 	if err != nil || time.Since(timestamp) > config.Registry.UpdateInterval {
 		return nil, fmt.Errorf("cache is outdated or missing")
@@ -56,8 +52,7 @@ func LoadFromCache(config *Config) ([]*Package, error) {
 	return cache.Packages, nil
 }
 
-// SaveToCache записва пакетите в кеша
-func SaveToCache(packages []*Package, config *Config) error {
+func SaveToCache(packages []*Package, config *cnfg.Config) error {
 	cacheFilePath := GetCacheFilePath(config)
 	timestampFilePath := GetCacheTimestampFilePath(config)
 
@@ -76,7 +71,6 @@ func SaveToCache(packages []*Package, config *Config) error {
 		return err
 	}
 
-	// Запис на времеви отпечатък
 	if err := saveTimestamp(timestampFilePath, cache.LastUpdated); err != nil {
 		return err
 	}
@@ -84,7 +78,6 @@ func SaveToCache(packages []*Package, config *Config) error {
 	return nil
 }
 
-// saveTimestamp записва времевия отпечатък във файл
 func saveTimestamp(path string, timestamp time.Time) error {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -99,7 +92,6 @@ func saveTimestamp(path string, timestamp time.Time) error {
 	return nil
 }
 
-// loadTimestamp зарежда времевия отпечатък от файл
 func loadTimestamp(path string) (time.Time, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

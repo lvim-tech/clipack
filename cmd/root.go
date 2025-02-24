@@ -26,5 +26,4 @@ func init() {
 }
 
 func initConfig() {
-	// Here you can initialize your config if needed
 }

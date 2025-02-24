@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -19,8 +20,7 @@ var previewCmd = &cobra.Command{
 	Use:   "preview [package-name]",
 	Short: "Preview the registry packages",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Зареждаме конфигурацията
-		config, err := pkg.LoadConfig()
+		config, err := cnfg.LoadConfig()
 		if err != nil {
 			log.Fatalf("Error loading config: %v", err)
 		}
@@ -28,7 +28,6 @@ var previewCmd = &cobra.Command{
 		if forceRefreshInPreview {
 			fmt.Println("Forcing refresh of the registry cache...")
 
-			// Изтриваме кеш файловете
 			cachePath := pkg.GetCacheFilePath(config)
 			os.Remove(cachePath)
 			timestampPath := pkg.GetCacheTimestampFilePath(config)

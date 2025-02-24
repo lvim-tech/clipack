@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
+	"github.com/lvim-tech/clipack/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -20,13 +22,11 @@ var updateCmd = &cobra.Command{
 	Use:   "update [package-name]",
 	Short: "Check for updates to installed packages",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Създаваме конфигурационния файл, ако не съществува
-		if err := pkg.CreateDefaultConfig(); err != nil {
+		if err := cnfg.CreateDefaultConfig(); err != nil {
 			log.Fatalf("Error creating config file: %v", err)
 		}
 
-		// Зареждаме конфигурацията
-		config, err := pkg.LoadConfig()
+		config, err := cnfg.LoadConfig()
 		if err != nil {
 			log.Fatalf("Error loading config: %v", err)
 		}
@@ -35,38 +35,38 @@ var updateCmd = &cobra.Command{
 		if forceRefreshInUpdate {
 			fmt.Println("Forcing refresh of the registry cache...")
 
-			// Изтриваме кеш файловете
 			cachePath := pkg.GetCacheFilePath(config)
 			os.Remove(cachePath)
-			timestampPath := pkg.GetCacheTimestampFilePath(config)
+			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
 			os.Remove(timestampPath)
 
 			packages, err = pkg.LoadAllPackagesFromRegistry(config)
 			if err != nil {
-				log.Fatalf("Error loading packages from registry: %v", err)
+				log.Fatalf("Error loading packages: %v", err)
 			}
-			fmt.Println("Packages loaded from registry:", packages)
+			fmt.Println(packages)
 
-			// Запазваме в кеша
 			if err := pkg.SaveToCache(packages, config); err != nil {
 				log.Printf("Warning: could not cache packages: %v", err)
 			} else {
 				fmt.Println("Packages saved to cache successfully.")
 			}
 		} else {
-			// Първо се опитваме да заредим от кеша
-			packages, err = pkg.LoadFromCache(config)
-			if err != nil {
-				// Ако няма кеш или е изтекъл, зареждаме от GitHub
-				fmt.Println("Fetching packages from registry...")
+			cachePath := pkg.GetCacheFilePath(config)
+			if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+				fmt.Println("Cache not found. Fetching packages from registry...")
 				packages, err = pkg.LoadAllPackagesFromRegistry(config)
 				if err != nil {
-					log.Fatalf("Error loading packages from registry: %v", err)
+					log.Fatalf("Error loading packages: %v", err)
 				}
 
-				// Запазваме в кеша
 				if err := pkg.SaveToCache(packages, config); err != nil {
 					log.Printf("Warning: could not cache packages: %v", err)
+				}
+			} else {
+				packages, err = pkg.LoadFromCache(config)
+				if err != nil {
+					log.Fatalf("Error loading packages from cache: %v", err)
 				}
 			}
 		}
@@ -116,14 +116,13 @@ var updateCmd = &cobra.Command{
 			fmt.Printf("Tags: %s\n", strings.Join(selectedPackage.Tags, ", "))
 			fmt.Printf("Updated: %s\n\n", selectedPackage.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-			if !pkg.AskForConfirmation("Proceed with update?") {
+			if !utils.AskForConfirmation("Proceed with update?") {
 				fmt.Println("Update cancelled.")
 				return
 			}
 
 			fmt.Println("\nUpdating package:", selectedPackage.Name)
 
-			// Премахваме съществуващата инсталация
 			existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
 			if err := os.RemoveAll(existingConfigDir); err != nil {
 				log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
@@ -136,7 +135,6 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			// Инсталираме новата версия
 			installCmd := exec.Command("clipack", "install", selectedPackage.Name)
 			installCmd.Stdout = os.Stdout
 			installCmd.Stderr = os.Stderr
@@ -219,14 +217,13 @@ var updateCmd = &cobra.Command{
 			fmt.Printf("Tags: %s\n", strings.Join(p.Tags, ", "))
 			fmt.Printf("Updated: %s\n\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-			if !pkg.AskForConfirmation("Proceed with update?") {
+			if !utils.AskForConfirmation("Proceed with update?") {
 				fmt.Println("Update cancelled.")
 				continue
 			}
 
 			fmt.Println("\nUpdating package:", p.Name)
 
-			// Премахваме съществуващата инсталация
 			existingConfigDir := filepath.Join(config.Paths.Configs, p.Name)
 			if err := os.RemoveAll(existingConfigDir); err != nil {
 				log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
@@ -239,7 +236,6 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			// Инсталираме новата версия
 			installCmd := exec.Command("clipack", "install", p.Name)
 			installCmd.Stdout = os.Stdout
 			installCmd.Stderr = os.Stderr

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/spf13/cobra"
 )
@@ -17,13 +18,11 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available packages",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Създаваме конфигурационния файл, ако не съществува
-		if err := pkg.CreateDefaultConfig(); err != nil {
+		if err := cnfg.CreateDefaultConfig(); err != nil {
 			log.Fatalf("Error creating config file: %v", err)
 		}
 
-		// Зареждаме конфигурацията
-		config, err := pkg.LoadConfig()
+		config, err := cnfg.LoadConfig()
 		if err != nil {
 			log.Fatalf("Error loading config: %v", err)
 		}
@@ -32,7 +31,6 @@ var listCmd = &cobra.Command{
 		if forceRefreshInList {
 			fmt.Println("Forcing refresh of the registry cache...")
 
-			// Изтриваме кеш файловете
 			cachePath := pkg.GetCacheFilePath(config)
 			os.Remove(cachePath)
 			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
@@ -44,26 +42,27 @@ var listCmd = &cobra.Command{
 			}
 			fmt.Println(packages)
 
-			// Запазваме в кеша
 			if err := pkg.SaveToCache(packages, config); err != nil {
 				log.Printf("Warning: could not cache packages: %v", err)
 			} else {
 				fmt.Println("Packages saved to cache successfully.")
 			}
 		} else {
-			// Първо се опитваме да заредим от кеша
-			packages, err = pkg.LoadFromCache(config)
-			if err != nil {
-				// Ако няма кеш или е изтекъл, зареждаме от GitHub
-				fmt.Println("Fetching packages from registry...")
+			cachePath := pkg.GetCacheFilePath(config)
+			if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+				fmt.Println("Cache not found. Fetching packages from registry...")
 				packages, err = pkg.LoadAllPackagesFromRegistry(config)
 				if err != nil {
-					log.Fatalf("Error loading packages from registry: %v", err)
+					log.Fatalf("Error loading packages: %v", err)
 				}
 
-				// Запазваме в кеша
 				if err := pkg.SaveToCache(packages, config); err != nil {
 					log.Printf("Warning: could not cache packages: %v", err)
+				}
+			} else {
+				packages, err = pkg.LoadFromCache(config)
+				if err != nil {
+					log.Fatalf("Error loading packages from cache: %v", err)
 				}
 			}
 		}

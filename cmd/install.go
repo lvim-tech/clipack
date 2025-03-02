@@ -187,9 +187,9 @@ var installCmd = &cobra.Command{
 		}
 
 		for _, step := range selectedPackage.Install.Steps {
-			if strings.Contains(step, "git clone") && !strings.Contains(step, " --branch v") {
-				step = strings.Replace(step, " --branch ", " --branch v", 1)
-			}
+			// if strings.Contains(step, "git clone") && !strings.Contains(step, " --branch v") {
+			// 	step = strings.Replace(step, " --branch ", " --branch v", 1)
+			// }
 			fmt.Printf("Executing: %s\n", step)
 			cmdParts := strings.Fields(step)
 			cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
@@ -267,7 +267,25 @@ var installCmd = &cobra.Command{
 		for _, additionalConfig := range selectedPackage.Install.AdditionalConfig {
 			dstPath := filepath.Join(configDir, additionalConfig.Filename)
 
-			if err := os.WriteFile(dstPath, []byte(additionalConfig.Content), 0644); err != nil {
+			dstDir := filepath.Dir(dstPath)
+			if err := os.MkdirAll(dstDir, 0755); err != nil {
+				log.Printf("Warning: could not create directory structure for %s: %v", dstPath, err)
+				continue
+			}
+
+			var content []byte
+			if strings.HasPrefix(additionalConfig.Content, "http://") || strings.HasPrefix(additionalConfig.Content, "https://") {
+				var err error
+				content, err = utils.DownloadContent(additionalConfig.Content)
+				if err != nil {
+					log.Printf("Warning: could not download content for %s: %v", additionalConfig.Filename, err)
+					continue
+				}
+			} else {
+				content = []byte(additionalConfig.Content)
+			}
+
+			if err := os.WriteFile(dstPath, content, 0644); err != nil {
 				log.Printf("Warning: could not write additional config %s: %v", additionalConfig.Filename, err)
 			} else {
 				fmt.Printf("Created additional config %s\n", dstPath)

@@ -13,10 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	registryRepoURL = "https://api.github.com/repos/lvim-tech/clipack-registry/contents"
-)
-
 type GitHubContent struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
@@ -46,10 +42,10 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-func fetchGitHubFile(path string) (string, error) {
+func fetchGitHubFile(path string, config *cnfg.Config) (string, error) {
 	client := newHTTPClient()
 
-	url := registryRepoURL + path
+	url := config.Registry.RegistryRepoURL + path
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -57,8 +53,12 @@ func fetchGitHubFile(path string) (string, error) {
 	}
 
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
 	req.Header.Set("User-Agent", "Clipack-Package-Manager")
+	
+	// Добавяме токен само ако е конфигуриран
+	if config.Registry.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Registry.Token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -86,6 +86,10 @@ func fetchGitHubFile(path string) (string, error) {
 	}
 
 	req.Header.Set("User-Agent", "Clipack-Package-Manager")
+	// Добавяме токен само ако е конфигуриран
+	if config.Registry.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Registry.Token)
+	}
 
 	resp, err = client.Do(req)
 	if err != nil {
@@ -116,7 +120,7 @@ func LoadAllPackagesFromRegistry(config *cnfg.Config) ([]*Package, error) {
 		return packages, nil
 	}
 
-	indexContent, err := fetchGitHubFile("/index.yaml")
+	indexContent, err := fetchGitHubFile("/index.yaml", config)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching index: %v", err)
 	}
@@ -132,7 +136,7 @@ func LoadAllPackagesFromRegistry(config *cnfg.Config) ([]*Package, error) {
 
 	var pkgs []*Package
 	for _, pkgPath := range index.Packages {
-		content, err := fetchGitHubFile("/" + pkgPath)
+		content, err := fetchGitHubFile("/"+pkgPath, config)
 		if err != nil {
 			continue
 		}
@@ -174,7 +178,7 @@ func LoadPackageFromRegistry(name string, config *cnfg.Config) (*Package, error)
 		}
 	}
 
-	indexContent, err := fetchGitHubFile("/index.yaml")
+	indexContent, err := fetchGitHubFile("/index.yaml", config)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching index: %v", err)
 	}
@@ -196,7 +200,7 @@ func LoadPackageFromRegistry(name string, config *cnfg.Config) (*Package, error)
 		return nil, fmt.Errorf("package %s not found in registry", name)
 	}
 
-	content, err := fetchGitHubFile("/" + pkgPath)
+	content, err := fetchGitHubFile("/"+pkgPath, config)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching package: %v", err)
 	}

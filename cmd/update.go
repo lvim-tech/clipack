@@ -249,7 +249,7 @@ var updateCmd = &cobra.Command{
 					continue
 				}
 
-				section := "man" + ext[1:] 
+				section := "man" + ext[1:]
 				sectionDir := filepath.Join(manDir, section)
 
 				if err := os.MkdirAll(sectionDir, 0755); err != nil {
@@ -273,6 +273,12 @@ var updateCmd = &cobra.Command{
 
 			for _, additionalConfig := range selectedPackage.Install.AdditionalConfig {
 				dstPath := filepath.Join(configDir, additionalConfig.Filename)
+
+				dstDir := filepath.Dir(dstPath)
+				if err := os.MkdirAll(dstDir, 0755); err != nil {
+					log.Printf("Warning: could not create directory structure for %s: %v", dstPath, err)
+					continue
+				}
 
 				if err := os.WriteFile(dstPath, []byte(additionalConfig.Content), 0644); err != nil {
 					log.Printf("Warning: could not write additional config %s: %v", additionalConfig.Filename, err)

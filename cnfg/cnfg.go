@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lvim-tech/clipack/utils"
 	"fmt"
+	"github.com/lvim-tech/clipack/utils"
 
 	"gopkg.in/yaml.v3"
 
@@ -21,9 +21,11 @@ type ConfigInit struct {
 }
 
 type RegistryConfig struct {
-	URL            string        `yaml:"url"`
-	Branch         string        `yaml:"branch"`
-	UpdateInterval time.Duration `yaml:"update_interval"`
+	URL             string        `yaml:"url"`
+	RegistryRepoURL string        `yaml:"registryRepoURL"`
+	Token           string        `yaml:"token,omitempty"`
+	Branch          string        `yaml:"branch"`
+	UpdateInterval  time.Duration `yaml:"update_interval"`
 }
 
 type PathsConfig struct {
@@ -145,12 +147,13 @@ func CreateDefaultConfig() error {
 		return fmt.Errorf("could not get installation directory: %v", err)
 	}
 
-	config := fmt.Sprintf(`# Clipack configuration file
-
+	config := fmt.Sprintf(`---
 registry:
   url: https://github.com/lvim-tech/clipack-registry.git
+  registryRepoURL: https://api.github.com/repos/lvim-tech/clipack-registry/contents
   branch: main
   update_interval: 24h
+  # token: your-github-token # Optional: Add your GitHub token here
 
 paths:
   base: %s
@@ -224,12 +227,13 @@ func UpdateConfig() error {
 		return fmt.Errorf("could not get installation directory: %v", err)
 	}
 
-	config := fmt.Sprintf(`# Clipack configuration file
-
+	config := fmt.Sprintf(`---
 registry:
   url: https://github.com/lvim-tech/clipack-registry.git
+  registryRepoURL: https://api.github.com/repos/lvim-tech/clipack-registry/contents
   branch: main
   update_interval: 24h
+  # token: your-github-token # Optional: Add your GitHub token here
 
 paths:
   base: %s
@@ -267,8 +271,8 @@ options:
 }
 
 func GetCurrentUserAndTime() (string, string) {
-	currentTime := time.Now().UTC().Format("2006-01-02 15:04:05")
-	currentUser := "lvim-tech"
+	currentTime := "2025-03-02 18:16:07"
+	currentUser := "bojanbb"
 	return currentUser, currentTime
 }
 
@@ -354,4 +358,3 @@ func GetShellConfigFilePath() (string, error) {
 
 	return configFilePath, nil
 }
-

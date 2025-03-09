@@ -29,6 +29,13 @@ jobs:
           echo "https://oauth2:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > .git/credentials
           chmod 600 .git/credentials
       - name: Run registry check
+        run: |
+          # Печатане на стойността на токена без да се показва директно (за дебъгване)
+          # Това ще даде само дължината на токена
+          echo "Token length: ${#GITHUB_TOKEN}"
+
+          # Изпълнение на скрипта с изрично подаване на токена като променлива на средата
+          go run scripts/check_registry.go
         env:
+          # Явно дефиниране на GITHUB_TOKEN със стойност от секретите
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-        run: go run scripts/check_registry.go

@@ -45,7 +45,6 @@ jobs:
             "context"
             "fmt"
             "log"
-            "os"
             "os/exec"
             "path/filepath"
             "strings"
@@ -214,8 +213,60 @@ jobs:
             }
         }
         EOF
-        # Заместване на токен placeholder с истинската стойност
-        sed -i "s/CLIPACK_TOKEN_VALUE/${{ secrets.CLIPACK }}/g" direct_registry_check.go
         
+        # Генериране на токенови кавички
+        # Това е важно, за да се избегне проблема със специални символи в токена
+        TOKEN_ESCAPED=$(printf '%s' "${{ secrets.CLIPACK }}" | sed 's/[\/&]/\\&/g')
+        sed -i "s/CLIPACK_TOKEN_VALUE/$TOKEN_ESCAPED/g" direct_registry_check.go
+        
+        # Проверка дали токенът е добавен правилно
+        if grep -q "token := \"\"" direct_registry_check.go; then
+          echo "WARNING: Token was not properly replaced!"
+          # Алтернативен опит за заместване
+          cat > token_inserter.go << 'EOF'
+          package main
+          
+          import (
+              "fmt"
+              "io/ioutil"
+              "os"
+              "strings"
+          )
+          
+          func main() {
+              if len(os.Args) < 3 {
+                  fmt.Println("Usage: go run token_inserter.go <file> <token>")
+                  os.Exit(1)
+              }
+              
+              filename := os.Args[1]
+              token := os.Args[2]
+              
+              content, err := ioutil.ReadFile(filename)
+              if err != nil {
+                  fmt.Println("Error reading file:", err)
+                  os.Exit(1)
+              }
+              
+              newContent := strings.Replace(
+                  string(content),
+                  `token := "CLIPACK_TOKEN_VALUE"`,
+                  fmt.Sprintf(`token := "%s"`, token),
+                  1,
+              )
+              
+              err = ioutil.WriteFile(filename, []byte(newContent), 0644)
+              if err != nil {
+                  fmt.Println("Error writing file:", err)
+                  os.Exit(1)
+              }
+              
+              fmt.Println("Token inserted successfully.")
+          }
+          EOF
+          
+          go run token_inserter.go direct_registry_check.go "${{ secrets.CLIPACK }}"
+        fi
+
     - name: Run direct registry check
       run: go run direct_registry_check.go

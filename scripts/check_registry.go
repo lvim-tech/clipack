@@ -109,7 +109,7 @@ func main() {
 			log.Fatalf("Error unmarshalling YAML for file %s: %v", filePath, err)
 		}
 
-		newVersion, newCommit, err = checkForNewVersionAndCommit(client, &pkg)
+		newVersion, newCommit, err := checkForNewVersionAndCommit(client, &pkg)
 		if err != nil {
 			log.Printf("Error checking for new version and commit for %s: %v", pkg.Name, err)
 			continue

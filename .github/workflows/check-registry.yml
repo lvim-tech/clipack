@@ -4,7 +4,7 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 permissions:
-  contents: write # Добавяне на write разрешение за съдържание
+  contents: write
 jobs:
   check-for-updates:
     runs-on: ubuntu-latest
@@ -16,7 +16,7 @@ jobs:
         with:
           repository: lvim-tech/clipack-registry
           path: registry
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }} # Това е задължително за външно хранилище
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }} # Ensure this secret is present
           ssh-strict: true
           persist-credentials: true
           clean: true
@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23' # Съобразено с вашия go.mod
+          go-version: '1.23'
       - name: Install dependencies
         run: go mod download
       - name: Configure Git
@@ -50,4 +50,3 @@ jobs:
           git add .
           git commit -m 'Automated registry update' || echo "No changes to commit"
           git push
-

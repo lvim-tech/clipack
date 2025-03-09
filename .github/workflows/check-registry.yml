@@ -3,14 +3,18 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-permissions:
-  contents: write
 jobs:
   check-for-updates:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout application repository
         uses: actions/checkout@v4
+      # Директно запишете токена във файл, който ще бъде използван от скрипта
+      - name: Create token file
+        run: echo "${{ secrets.PERSONAL_ACCESS_TOKEN }}" > .github_token
+      # Клонирайте registry хранилището
       - name: Clone registry repository
         run: |
           git clone https://oauth2:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/lvim-tech/clipack-registry.git registry
@@ -28,14 +32,10 @@ jobs:
           git config credential.helper 'store --file=.git/credentials'
           echo "https://oauth2:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > .git/credentials
           chmod 600 .git/credentials
+      # Създайте временен wrapper файл, който чете токена от файл
+      - name: Create token wrapper
+        run: "cat > token_wrapper.go << 'EOF'\npackage main\n\nimport (\n    \"io/ioutil\"\n    \"log\"\n    \"os\"\n    \"os/exec\"\n    \"strings\"\n)\n\nfunc main() {\n    // Прочитане на токена от файла\n    tokenBytes, err := ioutil.ReadFile(\".github_token\")\n    if err != nil {\n        log.Fatalf(\"Error reading token file: %v\", err)\n    }\n    \n    // Задаване на токена като променлива\n    token := strings.TrimSpace(string(tokenBytes))\n    if token == \"\" {\n        log.Fatalf(\"Empty token read from file\")\n    }\n    \n    // Задаване на променливата на средата\n    os.Setenv(\"GITHUB_TOKEN\", token)\n    \n    // Изпълнение на оригиналния скрипт\n    cmd := exec.Command(\"go\", \"run\", \"scripts/check_registry.go\")\n    cmd.Stdout = os.Stdout\n    cmd.Stderr = os.Stderr\n    cmd.Env = os.Environ()\n    \n    if err := cmd.Run(); err != nil {\n        log.Fatalf(\"Error running script: %v\", err)\n    }\n}\nEOF\n"
       - name: Run registry check
-        run: |
-          # Печатане на стойността на токена без да се показва директно (за дебъгване)
-          # Това ще даде само дължината на токена
-          echo "Token length: ${#GITHUB_TOKEN}"
-
-          # Изпълнение на скрипта с изрично подаване на токена като променлива на средата
-          go run scripts/check_registry.go
-        env:
-          # Явно дефиниране на GITHUB_TOKEN със стойност от секретите
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: go run token_wrapper.go
+      - name: Clean up token file
+        run: rm -f .github_token

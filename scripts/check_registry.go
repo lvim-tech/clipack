@@ -46,6 +46,7 @@ type Package struct {
 
 func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, string, error) {
 	ownerRepo := strings.TrimPrefix(pkg.Install.Source.URL, "https://github.com/")
+	ownerRepo = strings.TrimSuffix(ownerRepo, ".git") // премахване на .git
 	parts := strings.Split(ownerRepo, "/")
 	if len(parts) != 2 {
 		return pkg.Version, pkg.Commit, fmt.Errorf("invalid repository URL: %s", pkg.Install.Source.URL)
@@ -54,14 +55,14 @@ func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, s
 
 	// Check for the latest release
 	release, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
-	if (err != nil) {
+	if err != nil {
 		return pkg.Version, pkg.Commit, fmt.Errorf("error getting latest release: %v", err)
 	}
 	newVersion := release.GetTagName()
 
 	// Check for the latest commit
 	commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)
-	if (err != nil) {
+	if err != nil {
 		return pkg.Version, pkg.Commit, fmt.Errorf("error getting commits: %v", err)
 	}
 	newCommit := commits[0].GetSHA()
@@ -95,7 +96,7 @@ func main() {
 
 	updated := false
 
-	for _, file := range index.Packages {
+	for _, file := range index.PPackages {
 		filePath := filepath.Join("registry", file)
 		data, err := ioutil.ReadFile(filePath)
 		if err != nil {
@@ -142,14 +143,14 @@ func main() {
 
 		cmd = exec.Command("git", "commit", "-m", "Automated registry update")
 		cmd.Dir = "registry"
-		err = cmd.Run()
+		err := cmd.Run()
 		if err != nil {
 			log.Fatalf("Error committing changes to git: %v", err)
 		}
 
 		cmd = exec.Command("git", "push")
 		cmd.Dir = "registry"
-		err = cmd.Run()
+		err := cmd.Run()
 		if err != nil {
 			log.Fatalf("Error pushing changes to git: %v", err)
 		}

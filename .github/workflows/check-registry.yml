@@ -36,12 +36,5 @@ jobs:
         echo "https://oauth2:${{ secrets.CLIPACK }}@github.com" > .git/credentials
         chmod 600 .git/credentials
 
-    - name: Print CLIPACK environment variable
-      env:
-        CLIPACK: ${{ secrets.CLIPACK }}
-      run: echo "CLIPACK=${CLIPACK}"
-
     - name: Run check registry script
-      env:
-        CLIPACK: ${{ secrets.CLIPACK }}
-      run: go run scripts/check_registry.go
+      run: go run scripts/check_registry.go ${{ secrets.CLIPACK }}

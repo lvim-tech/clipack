@@ -8,6 +8,7 @@ import (
     "os/exec"
     "path/filepath"
     "strings"
+    "time"
     "io/ioutil"
 
     "github.com/google/go-github/v41/github"
@@ -83,10 +84,10 @@ func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, s
 }
 
 func main() {
-    token := os.Getenv("CLIPACK")
-    if token == "" {
-        log.Fatalf("CLIPACK environment variable is required")
+    if len(os.Args) < 2 {
+        log.Fatalf("Usage: %s <token>", os.Args[0])
     }
+    token := os.Args[1]
 
     ctx := context.Background()
     ts := oauth2.StaticTokenSource(
@@ -131,6 +132,7 @@ func main() {
         if newVersion != pkg.Version || newCommit != pkg.Commit {
             pkg.Version = newVersion
             pkg.Commit = newCommit
+            pkg.UpdatedAt = time.Now().Format(time.RFC3339)
             updated = true
 
             data, err = yaml.Marshal(&pkg)

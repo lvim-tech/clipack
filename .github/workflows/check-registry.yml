@@ -36,30 +36,21 @@ jobs:
         echo "https://oauth2:${{ secrets.CLIPACK }}@github.com" > .git/credentials
         chmod 600 .git/credentials
 
-    # Опростен подход - създаване на малък Go файл, който задава GITHUB_TOKEN във средата
-    - name: Create environment setter
+    # Модифициране на оригиналния файл директно
+    - name: Modify check_registry.go
       run: |
-        echo 'package main
-
-        import (
-          "os"
-          "fmt"
-          "os/exec"
-        )
+        # Създаване на временно копие
+        cp scripts/check_registry.go scripts/check_registry.go.bak
         
-        func main() {
-          // Задаване на GITHUB_TOKEN
-          os.Setenv("GITHUB_TOKEN", "${{ secrets.CLIPACK }}")
-          
-          // Изпълняване на оригиналния скрипт
-          cmd := exec.Command("go", "run", "scripts/check_registry.go")
-          cmd.Stdout = os.Stdout
-          cmd.Stderr = os.Stderr
-          if err := cmd.Run(); err != nil {
-            fmt.Printf("Error running script: %v\n", err)
-            os.Exit(1)
-          }
-        }' > env_setter.go
+        # Замяна на проверката за GITHUB_TOKEN
+        sed -i 's/token := os.Getenv("GITHUB_TOKEN")/token := "${{ secrets.CLIPACK }}"/' scripts/check_registry.go
+        
+        # Премахване на проверката дали токенът е празен, тъй като вече е вграден
+        sed -i 's/if token == "" {/if false {/' scripts/check_registry.go
+        
+        # Извеждане на променените редове за диагностика (само за отстраняване на грешки)
+        echo "Modified lines (with token redacted):"
+        grep -n -A 2 -B 2 "token :=" scripts/check_registry.go | sed 's/${{ secrets.CLIPACK }}/***TOKEN***/g'
 
-    - name: Run registry check with environment setter
-      run: go run env_setter.go
+    - name: Run modified check_registry.go
+      run: go run scripts/check_registry.go

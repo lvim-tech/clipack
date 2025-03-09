@@ -55,3 +55,4 @@ jobs:
         git add .
         git commit -m 'Automated registry update' || echo "No changes to commit"
         git push
+        token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

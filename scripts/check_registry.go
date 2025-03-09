@@ -52,12 +52,14 @@ func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, s
 	}
 	owner, repo := parts[0], parts[1]
 
+	// Check for the latest release
 	release, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
 	if err != nil {
 		return pkg.Version, pkg.Commit, fmt.Errorf("error getting latest release: %v", err)
 	}
 	newVersion := release.GetTagName()
 
+	// Check for the latest commit
 	commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)
 	if err != nil {
 		return pkg.Version, pkg.Commit, fmt.Errorf("error getting commits: %v", err)
@@ -79,6 +81,7 @@ func main() {
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
+	// Четене на index.yaml
 	indexData, err := ioutil.ReadFile(filepath.Join("registry", "index.yaml"))
 	if err != nil {
 		log.Fatalf("Error reading index.yaml: %v", err)
@@ -129,6 +132,7 @@ func main() {
 	}
 
 	if updated {
+		// Комитване на промените
 		cmd := exec.Command("git", "add", ".")
 		cmd.Dir = "registry"
 		err := cmd.Run()

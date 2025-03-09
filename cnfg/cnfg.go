@@ -2,24 +2,24 @@ package cnfg
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"fmt"
 	"github.com/lvim-tech/clipack/utils"
-
 	"gopkg.in/yaml.v3"
-
 	"github.com/spf13/viper"
 )
 
+// ConfigInit holds the initial configuration setup
 type ConfigInit struct {
 	InstallPath string
 }
 
+// RegistryConfig holds the configuration for the registry
 type RegistryConfig struct {
 	URL             string        `yaml:"url"`
 	RegistryRepoURL string        `yaml:"registryRepoURL"`
@@ -28,6 +28,7 @@ type RegistryConfig struct {
 	UpdateInterval  time.Duration `yaml:"update_interval"`
 }
 
+// PathsConfig holds the configuration for various paths used in the application
 type PathsConfig struct {
 	Base     string `yaml:"base"`
 	Registry string `yaml:"registry"`
@@ -37,18 +38,22 @@ type PathsConfig struct {
 	Man      string `yaml:"man"`
 }
 
+// OptionsConfig holds the configuration for various options in the application
 type OptionsConfig struct {
-	AutoSymlink   bool `yaml:"auto_symlink"`
-	BackupConfigs bool `yaml:"backup_configs"`
-	CleanupBuild  bool `yaml:"cleanup_build"`
+	AutoSymlink   bool   `yaml:"auto_symlink"`
+	BackupConfigs bool   `yaml:"backup_configs"`
+	CleanupBuild  bool   `yaml:"cleanup_build"`
+	InstallMethod string `yaml:"install_method"` // New field for install method
 }
 
+// Config holds the entire configuration structure
 type Config struct {
 	Registry RegistryConfig `yaml:"registry"`
 	Paths    PathsConfig    `yaml:"paths"`
 	Options  OptionsConfig  `yaml:"options"`
 }
 
+// InitConfig initializes the configuration
 func InitConfig() ConfigInit {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -65,6 +70,7 @@ func InitConfig() ConfigInit {
 	viper.SetConfigType("yaml")
 
 	viper.SetDefault("install_path", filepath.Join(home, "clipack_apps"))
+	viper.SetDefault("options.install_method", "version") // Set default value for install_method
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		if err := viper.WriteConfigAs(configFile); err != nil {
@@ -81,6 +87,7 @@ func InitConfig() ConfigInit {
 	}
 }
 
+// LoadConfig loads the configuration from the config file
 func LoadConfig() (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -98,10 +105,14 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("could not parse config file: %v", err)
 	}
 
-	validateConfig(&config)
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %v", err)
+	}
+
 	return &config, nil
 }
 
+// validateConfig validates the configuration fields
 func validateConfig(config *Config) error {
 	if config.Registry.URL == "" {
 		return fmt.Errorf("registry URL is required")
@@ -125,6 +136,7 @@ func validateConfig(config *Config) error {
 	return nil
 }
 
+// CreateDefaultConfig creates the default configuration file if it does not exist
 func CreateDefaultConfig() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -167,6 +179,7 @@ options:
   auto_symlink: true
   backup_configs: true
   cleanup_build: true
+  install_method: version
 `,
 		installDir,
 		filepath.Join(installDir, "registry"),
@@ -209,6 +222,7 @@ options:
 	return nil
 }
 
+// UpdateConfig updates the configuration file
 func UpdateConfig() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -247,6 +261,7 @@ options:
   auto_symlink: true
   backup_configs: true
   cleanup_build: true
+  install_method: version
 `,
 		installDir,
 		filepath.Join(installDir, "registry"),
@@ -270,12 +285,14 @@ options:
 	return nil
 }
 
+// GetCurrentUserAndTime returns the current user and time
 func GetCurrentUserAndTime() (string, string) {
 	currentTime := "2025-03-02 18:16:07"
 	currentUser := "bojanbb"
 	return currentUser, currentTime
 }
 
+// AskInstallDirectory prompts the user to input the installation directory
 func AskInstallDirectory() (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 
@@ -307,6 +324,7 @@ func AskInstallDirectory() (string, error) {
 	return installDir, nil
 }
 
+// AddPathsToShellConfig adds the bin and man paths to the shell configuration file
 func AddPathsToShellConfig(binPath, manPath string) error {
 	configFilePath, err := GetShellConfigFilePath()
 	if err != nil {
@@ -330,12 +348,15 @@ func AddPathsToShellConfig(binPath, manPath string) error {
 		if _, err := configFile.WriteString(fmt.Sprintf("\nset -x PATH %s $PATH\nset -x MANPATH %s $MANPATH\n", binPath, manPath)); err != nil {
 			return fmt.Errorf("could not write to shell config file: %v", err)
 		}
+	default:
+		return fmt.Errorf("unsupported shell: %s", shell)
 	}
 
 	fmt.Printf("Paths added to %s\n", configFilePath)
 	return nil
 }
 
+// GetShellConfigFilePath returns the path to the shell configuration file
 func GetShellConfigFilePath() (string, error) {
 	usr, err := user.Current()
 	if err != nil {

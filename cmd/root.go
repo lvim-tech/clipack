@@ -26,4 +26,5 @@ func init() {
 }
 
 func initConfig() {
+	// Add any initialization logic if needed
 }

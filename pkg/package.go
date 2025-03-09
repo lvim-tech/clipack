@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/lvim-tech/clipack/cnfg"
-	"github.com/lvim-tech/clipack/utils"
 	"gopkg.in/yaml.v3"
 )
 
+// Install holds the installation steps and related data
 type Install struct {
 	Script           string             `yaml:"script,omitempty"`
 	Commands         []string           `yaml:"commands,omitempty"`
@@ -26,30 +26,28 @@ type Install struct {
 	AdditionalConfig []AdditionalConfig `yaml:"additional-config,omitempty"`
 }
 
-type Installation struct {
-    Method        string    `yaml:"method"`
-    ActualVersion string    `yaml:"actual_version"`
-    InstalledAt   time.Time `yaml:"installed_at"`
-    InstalledBy   string    `yaml:"installed_by"`
-}
-
+// AdditionalConfig holds additional configuration data
 type AdditionalConfig struct {
 	Filename string `yaml:"filename"`
 	Content  string `yaml:"content"`
 }
 
+// PostInstall holds post-installation scripts
 type PostInstall struct {
 	Scripts []Script `yaml:"scripts,omitempty"`
 }
 
+// Script holds a script filename and its content
 type Script struct {
 	Filename string `yaml:"filename"`
 	Content  string `yaml:"content"`
 }
 
+// Package holds the package data
 type Package struct {
 	Name        string      `yaml:"name"`
 	Version     string      `yaml:"version"`
+	Commit      string      `yaml:"commit"`
 	Description string      `yaml:"description"`
 	Maintainer  string      `yaml:"maintainer"`
 	UpdatedAt   time.Time   `yaml:"updated_at"`
@@ -59,9 +57,10 @@ type Package struct {
 	Homepage    string      `yaml:"homepage"`
 	Install     Install     `yaml:"install"`
 	PostInstall PostInstall `yaml:"post-install,omitempty"`
-	Installation Installation `yaml:"installation,omitempty"`
+	InstallMethod    string          `yaml:"install_method"`
 }
 
+// LoadAllPackagesFromDir loads all packages from a directory
 func LoadAllPackagesFromDir(registryDir string) ([]*Package, error) {
 	if _, err := os.Stat(registryDir); os.IsNotExist(err) {
 		return nil, fmt.Errorf("registry directory does not exist: %v", err)
@@ -94,6 +93,7 @@ func LoadAllPackagesFromDir(registryDir string) ([]*Package, error) {
 	return packages, nil
 }
 
+// LoadPackageFromBytes loads a package from a byte array
 func LoadPackageFromBytes(data []byte) (*Package, error) {
 	var pkg Package
 	if err := yaml.Unmarshal(data, &pkg); err != nil {
@@ -102,6 +102,7 @@ func LoadPackageFromBytes(data []byte) (*Package, error) {
 	return &pkg, nil
 }
 
+// LoadPackageFromReader loads a package from an io.Reader
 func LoadPackageFromReader(r io.Reader) (*Package, error) {
 	var pkg Package
 	decoder := yaml.NewDecoder(r)
@@ -111,6 +112,7 @@ func LoadPackageFromReader(r io.Reader) (*Package, error) {
 	return &pkg, nil
 }
 
+// CopyFile copies a file from src to dst
 func CopyFile(src, dst string) error {
 	sourceFileStat, err := os.Stat(src)
 	if err != nil {
@@ -140,6 +142,7 @@ func CopyFile(src, dst string) error {
 	return nil
 }
 
+// LoadInstalledPackages loads installed packages from the config directory
 func LoadInstalledPackages(config *cnfg.Config) ([]*Package, error) {
 	installedDir := config.Paths.Configs
 	entries, err := os.ReadDir(installedDir)
@@ -168,20 +171,4 @@ func LoadInstalledPackages(config *cnfg.Config) ([]*Package, error) {
 	}
 
 	return packages, nil
-}
-
-func CreateInstallationInfo(method string, version string) Installation {
-    return Installation{
-        Method:        method,
-        ActualVersion: version,
-        InstalledAt:   time.Now(),
-        InstalledBy:   utils.GetCurrentUser(), // трябва да се добави в utils
-    }
-}
-
-func (p *Package) NeedsUpdate(newVersion string) bool {
-    if p.Installation.Method == "latest" {
-        return true
-    }
-    return p.Version != newVersion // стандартна проверка за specific
 }

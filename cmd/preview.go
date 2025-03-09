@@ -41,7 +41,32 @@ var previewCmd = &cobra.Command{
 				log.Fatalf("Error loading package: %v", err)
 			}
 
-			printFullPackageInfo(packageInfo)
+			fmt.Println("\nPackage Details:")
+			fmt.Println("----------------")
+			yamlData, err := yaml.Marshal(packageInfo)
+			if err != nil {
+				log.Fatalf("Error marshalling package info: %v", err)
+			}
+			fmt.Println(string(yamlData))
+
+			installedPackages, err := pkg.LoadInstalledPackages(config)
+			if err != nil {
+				log.Fatalf("Error loading installed packages: %v", err)
+			}
+
+			for _, ip := range installedPackages {
+				if ip.Name == packageInfo.Name {
+					fmt.Printf("\nInstalled Information:\n")
+					fmt.Printf("Install Method: %s\n", ip.InstallMethod)
+					if ip.InstallMethod == "commit" {
+						fmt.Printf("Installed Commit: %s\n", ip.Commit)
+					} else {
+						fmt.Printf("Installed Version: %s\n", ip.Version)
+					}
+					return
+				}
+			}
+			fmt.Printf("\nInstall Method: Not installed\n")
 			return
 		}
 
@@ -52,7 +77,7 @@ var previewCmd = &cobra.Command{
 
 		fmt.Println("Registry Preview:")
 		for i, pkg := range packages {
-			fmt.Printf("%d) Name: %s, Version: %s, Description: %s\n", i+1, pkg.Name, pkg.Version, pkg.Description)
+			fmt.Printf("%d) Name: %s, Version: %s, Commit: %s\n   Description: %s\n", i+1, pkg.Name, pkg.Version, pkg.Commit, pkg.Description)
 		}
 
 		reader := bufio.NewReader(os.Stdin)
@@ -76,20 +101,36 @@ var previewCmd = &cobra.Command{
 			}
 
 			selectedPackage := packages[num-1]
-			printFullPackageInfo(selectedPackage)
+
+			fmt.Println("\nPackage Details:")
+			fmt.Println("----------------")
+			yamlData, err := yaml.Marshal(selectedPackage)
+			if err != nil {
+				log.Fatalf("Error marshalling package info: %v", err)
+			}
+			fmt.Println(string(yamlData))
+
+			installedPackages, err := pkg.LoadInstalledPackages(config)
+			if err != nil {
+				log.Fatalf("Error loading installed packages: %v", err)
+			}
+
+			for _, ip := range installedPackages {
+				if ip.Name == selectedPackage.Name {
+					fmt.Printf("\nInstalled Information:\n")
+					fmt.Printf("Install Method: %s\n", ip.InstallMethod)
+					if ip.InstallMethod == "commit" {
+						fmt.Printf("Installed Commit: %s\n", ip.Commit)
+					} else {
+						fmt.Printf("Installed Version: %s\n", ip.Version)
+					}
+					return
+				}
+			}
+			fmt.Printf("\nInstall Method: Not installed\n")
 			break
 		}
 	},
-}
-
-func printFullPackageInfo(pkg *pkg.Package) {
-	fmt.Println("\nPackage Details:")
-	fmt.Println("----------------")
-	yamlData, err := yaml.Marshal(pkg)
-	if err != nil {
-		log.Fatalf("Error marshalling package info: %v", err)
-	}
-	fmt.Println(string(yamlData))
 }
 
 func init() {

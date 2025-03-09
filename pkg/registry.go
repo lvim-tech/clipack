@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// GitHubContent represents the structure of a file on GitHub
 type GitHubContent struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
@@ -25,10 +26,12 @@ type GitHubContent struct {
 	Message     string `json:"message"`
 }
 
+// IndexFile represents the index file structure
 type IndexFile struct {
 	Packages []string `yaml:"packages"`
 }
 
+// newHTTPClient creates a new HTTP client with default settings
 func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: 30 * time.Second,
@@ -42,6 +45,7 @@ func newHTTPClient() *http.Client {
 	}
 }
 
+// fetchGitHubFile fetches a file from GitHub
 func fetchGitHubFile(path string, config *cnfg.Config) (string, error) {
 	client := newHTTPClient()
 
@@ -54,8 +58,8 @@ func fetchGitHubFile(path string, config *cnfg.Config) (string, error) {
 
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "Clipack-Package-Manager")
-	
-	// Добавяме токен само ако е конфигуриран
+
+	// Add token only if configured
 	if config.Registry.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+config.Registry.Token)
 	}
@@ -86,7 +90,7 @@ func fetchGitHubFile(path string, config *cnfg.Config) (string, error) {
 	}
 
 	req.Header.Set("User-Agent", "Clipack-Package-Manager")
-	// Добавяме токен само ако е конфигуриран
+	// Add token only if configured
 	if config.Registry.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+config.Registry.Token)
 	}
@@ -110,6 +114,7 @@ func fetchGitHubFile(path string, config *cnfg.Config) (string, error) {
 	return string(rawContent), nil
 }
 
+// LoadAllPackagesFromRegistry loads all packages from the registry
 func LoadAllPackagesFromRegistry(config *cnfg.Config) ([]*Package, error) {
 	if err := utils.EnsureDirectoryExists(config.Paths.Registry); err != nil {
 		return nil, fmt.Errorf("error creating registry directory: %v", err)
@@ -163,11 +168,13 @@ func LoadAllPackagesFromRegistry(config *cnfg.Config) ([]*Package, error) {
 	}
 
 	if err := SaveToCache(pkgs, config); err != nil {
+		return nil, fmt.Errorf("error saving to cache: %v", err)
 	}
 
 	return pkgs, nil
 }
 
+// LoadPackageFromRegistry loads a package by name from the registry
 func LoadPackageFromRegistry(name string, config *cnfg.Config) (*Package, error) {
 	packages, err := LoadFromCache(config)
 	if err == nil {

@@ -70,6 +70,16 @@ var listCmd = &cobra.Command{
 			log.Fatalf("No packages found in registry")
 		}
 
+		installedPackages, err := pkg.LoadInstalledPackages(config)
+		if err != nil {
+			log.Fatalf("Error loading installed packages: %v", err)
+		}
+
+		installedMap := make(map[string]*pkg.Package)
+		for _, ip := range installedPackages {
+			installedMap[ip.Name] = ip
+		}
+
 		fmt.Println("\nAvailable packages:")
 		fmt.Println("------------------")
 		for _, p := range packages {
@@ -79,7 +89,8 @@ var listCmd = &cobra.Command{
 			}
 
 			fmt.Printf("\nName: %s\n", p.Name)
-			fmt.Printf("Version: %s\n", p.Version)
+			fmt.Printf("Registry Version: %s\n", p.Version)
+			fmt.Printf("Registry Commit: %s\n", p.Commit)
 			fmt.Printf("Description: %s\n", p.Description)
 			fmt.Printf("Maintainer: %s\n", p.Maintainer)
 			if p.License != "" {
@@ -90,6 +101,16 @@ var listCmd = &cobra.Command{
 			}
 			fmt.Printf("Tags: %s\n", tags)
 			fmt.Printf("Updated: %s\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
+			if ip, ok := installedMap[p.Name]; ok {
+				fmt.Printf("Install Method: %s\n", ip.InstallMethod)
+				if ip.InstallMethod == "commit" {
+					fmt.Printf("Installed Commit: %s\n", ip.Commit)
+				} else {
+					fmt.Printf("Installed Version: %s\n", ip.Version)
+				}
+			} else {
+				fmt.Printf("Install Method: Not installed\n")
+			}
 		}
 	},
 }

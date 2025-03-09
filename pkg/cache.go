@@ -8,14 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
 	"github.com/lvim-tech/clipack/cnfg"
 )
 
+// PackageCache holds the cached packages and the last updated timestamp
 type PackageCache struct {
 	Packages    []*Package
 	LastUpdated time.Time
 }
 
+// GetCacheFilePath returns the path to the cache file
 func GetCacheFilePath(config *cnfg.Config) string {
 	cacheDir := filepath.Join(config.Paths.Registry)
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -24,10 +27,12 @@ func GetCacheFilePath(config *cnfg.Config) string {
 	return filepath.Join(cacheDir, "packages_cache.gob")
 }
 
+// GetCacheTimestampFilePath returns the path to the cache timestamp file
 func GetCacheTimestampFilePath(config *cnfg.Config) string {
 	return filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
 }
 
+// LoadFromCache loads packages from the cache
 func LoadFromCache(config *cnfg.Config) ([]*Package, error) {
 	cacheFilePath := GetCacheFilePath(config)
 	timestampFilePath := GetCacheTimestampFilePath(config)
@@ -52,6 +57,7 @@ func LoadFromCache(config *cnfg.Config) ([]*Package, error) {
 	return cache.Packages, nil
 }
 
+// SaveToCache saves packages to the cache
 func SaveToCache(packages []*Package, config *cnfg.Config) error {
 	cacheFilePath := GetCacheFilePath(config)
 	timestampFilePath := GetCacheTimestampFilePath(config)
@@ -78,6 +84,7 @@ func SaveToCache(packages []*Package, config *cnfg.Config) error {
 	return nil
 }
 
+// saveTimestamp saves the timestamp to a file
 func saveTimestamp(path string, timestamp time.Time) error {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -92,6 +99,7 @@ func saveTimestamp(path string, timestamp time.Time) error {
 	return nil
 }
 
+// loadTimestamp loads the timestamp from a file
 func loadTimestamp(path string) (time.Time, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

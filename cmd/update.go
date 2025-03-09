@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
@@ -20,7 +19,7 @@ import (
 
 var (
 	forceRefreshInUpdate bool
-	useLatestInUpdate    bool
+	updateInstallMethod  string
 )
 
 var updateCmd = &cobra.Command{
@@ -34,6 +33,10 @@ var updateCmd = &cobra.Command{
 		config, err := cnfg.LoadConfig()
 		if err != nil {
 			log.Fatalf("Error loading config: %v", err)
+		}
+
+		if updateInstallMethod == "" {
+			updateInstallMethod = config.Options.InstallMethod
 		}
 
 		var packages []*pkg.Package
@@ -78,6 +81,7 @@ var updateCmd = &cobra.Command{
 		if len(packages) == 0 {
 			log.Fatalf("No packages found in registry")
 		}
+
 		installedPackages, err := pkg.LoadInstalledPackages(config)
 		if err != nil {
 			log.Fatalf("Error loading installed packages: %v", err)
@@ -86,78 +90,32 @@ var updateCmd = &cobra.Command{
 		if len(args) > 0 {
 			packageName := args[0]
 			var selectedPackage *pkg.Package
-			var installedPackage *pkg.Package
 
-			// Намиране на инсталирания пакет
 			for _, installed := range installedPackages {
-				if installed.Name == packageName {
-					installedPackage = installed
-					break
-				}
-			}
-
-			if installedPackage == nil {
-				fmt.Printf("Package %s is not installed\n", packageName)
-				return
-			}
-
-			// Намиране на последната версия
-			for _, p := range packages {
-				if p.Name == packageName {
-					selectedPackage = p
+				if installed.Name == packageName && installed.InstallMethod == updateInstallMethod {
+					for _, p := range packages {
+						if p.Name == installed.Name && ((updateInstallMethod == "version" && p.Version != installed.Version) || (updateInstallMethod == "commit" && p.Commit != installed.Commit)) {
+							selectedPackage = p
+							break
+						}
+					}
 					break
 				}
 			}
 
 			if selectedPackage == nil {
-				fmt.Printf("Package %s not found in registry\n", packageName)
-				return
-			}
-
-			// Проверка дали е нужен ъпдейт
-			shouldUpdate := false
-			updateReason := ""
-			latestCommit := ""
-
-			if installedPackage.Installation.Method == "latest" {
-				// Получаване на последния комит от онлайн хостването на пакета
-				cmd := exec.Command("git", "ls-remote", selectedPackage.Homepage, "HEAD")
-				out, err := cmd.Output()
-				if err != nil {
-					log.Printf("Error getting latest commit for %s: %v", selectedPackage.Name, err)
-				}
-				latestCommit = strings.Fields(string(out))[0]
-
-				if latestCommit != installedPackage.Installation.ActualVersion {
-					shouldUpdate = true
-					updateReason = fmt.Sprintf("new commit available (%s -> %s)", installedPackage.Installation.ActualVersion, latestCommit)
-				}
-			} else {
-				if selectedPackage.Version != installedPackage.Installation.ActualVersion {
-					shouldUpdate = true
-					updateReason = fmt.Sprintf("new version available (%s -> %s)", installedPackage.Installation.ActualVersion, selectedPackage.Version)
-				}
-			}
-
-			// Поправка за показване на текущата версия като "latest"
-			currentVersion := installedPackage.Installation.ActualVersion
-			if installedPackage.Installation.Method == "latest" {
-				currentVersion = "latest"
-			}
-
-			if !shouldUpdate {
-				fmt.Printf("%s is up to date (version %s)\n", packageName, currentVersion)
+				fmt.Printf("No updates available for package %s\n", packageName)
 				return
 			}
 
 			fmt.Println("\nSelected package details:")
 			fmt.Println("------------------------")
 			fmt.Printf("Name: %s\n", selectedPackage.Name)
-			fmt.Printf("Current Version: %s\n", currentVersion)
-			if installedPackage.Installation.Method == "latest" {
-				fmt.Printf("New Commit: %s\n", latestCommit)
+			fmt.Printf("Installed Version/Commit: %s\n", installedPackages[0].Version)
+			if updateInstallMethod == "version" {
+				fmt.Printf("Available Version: %s\n", selectedPackage.Version)
 			} else {
-				fmt.Printf("New Version: %s\n", selectedPackage.Version)
+				fmt.Printf("Available Commit: %s\n", selectedPackage.Commit)
 			}
 			fmt.Printf("Description: %s\n", selectedPackage.Description)
 			fmt.Printf("Maintainer: %s\n", selectedPackage.Maintainer)
@@ -168,208 +126,49 @@ var updateCmd = &cobra.Command{
 				fmt.Printf("Homepage: %s\n", selectedPackage.Homepage)
 			}
 			fmt.Printf("Tags: %s\n", strings.Join(selectedPackage.Tags, ", "))
-			fmt.Printf("Updated: %s\n", selectedPackage.UpdatedAt.Format("2006-01-02 15:04:05"))
-			fmt.Printf("Update Reason: %s\n\n", updateReason)
+			fmt.Printf("Updated: %s\n\n", selectedPackage.UpdatedAt.Format("2006-01-02 15:04:05"))
 
 			if !utils.AskForConfirmation("Proceed with update?") {
 				fmt.Println("Update cancelled.")
 				return
 			}
 
-			fmt.Println("\nUpdating package:", selectedPackage.Name)
-
-			// Почистване на съществуващите файлове
-			existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
-			if err := os.RemoveAll(existingConfigDir); err != nil {
-				log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
-			}
-
-			for _, binPath := range selectedPackage.Install.Binaries {
-				existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
-				if err := os.Remove(existingBinFile); err != nil {
-					log.Printf("Warning: could not remove existing binary %s: %v", existingBinFile, err)
-				}
-			}
-
-			// Четене и почистване на предишната инсталация
-			packageConfigPath := filepath.Join(config.Paths.Configs, selectedPackage.Name, "package.yaml")
-			packageData, err := os.ReadFile(packageConfigPath)
-			if err == nil {
-				var previousPackage pkg.Package
-				if err := yaml.Unmarshal(packageData, &previousPackage); err == nil {
-					for _, binPath := range previousPackage.Install.Binaries {
-						existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
-						if err := os.Remove(existingBinFile); err != nil {
-							log.Printf("Warning: could not remove existing binary %s: %v", existingBinFile, err)
-						}
-					}
-
-					for _, confPath := range previousPackage.Install.Configs {
-						existingConfFile := filepath.Join(config.Paths.Configs, previousPackage.Name, filepath.Base(confPath))
-						if err := os.Remove(existingConfFile); err != nil {
-							log.Printf("Warning: could not remove existing config %s: %v", existingConfFile, err)
-						}
-					}
-
-					for _, manPage := range previousPackage.Install.Man {
-						existingManFile := filepath.Join(config.Paths.Man, filepath.Base(manPage))
-						if err := os.Remove(existingManFile); err != nil {
-							log.Printf("Warning: could not remove existing man page %s: %v", existingManFile, err)
-						}
-					}
-				}
-			}
-
-			binDir := config.Paths.Bin
-			configDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
-			buildDir := filepath.Join(config.Paths.Build, selectedPackage.Name)
-			manDir := config.Paths.Man
-
-			if _, err := os.Stat(buildDir); err == nil {
-				if utils.AskForConfirmation(fmt.Sprintf("Build directory %s exists. Remove it?", buildDir)) {
-					if err := os.RemoveAll(buildDir); err != nil {
-						log.Fatalf("Error removing build directory: %v", err)
-					}
-				} else {
-					fmt.Println("Installation cancelled.")
-					return
-				}
-			}
-
-			for _, dir := range []string{binDir, configDir, buildDir, manDir} {
-				if err := utils.EnsureDirectoryExists(dir); err != nil {
-					log.Fatalf("Error creating directory %s: %v", dir, err)
-				}
-			}
-
-			if err := os.Chdir(buildDir); err != nil {
-				log.Fatalf("Error changing to directory %s: %v", buildDir, err)
-			}
-
-			// Обновяване на installation информацията
-			if installedPackage.Installation.Method == "latest" {
-				cmd := exec.Command("git", "rev-parse", "HEAD")
-				cmd.Dir = buildDir
-				out, err := cmd.Output()
-				if err != nil {
-					log.Fatalf("Error getting current commit: %v", err)
-				}
-				commit := strings.TrimSpace(string(out))
-				selectedPackage.Installation.Method = "latest"
-				selectedPackage.Installation.ActualVersion = commit
-			}
-
-			for k, v := range selectedPackage.Install.Environment {
-				os.Setenv(k, v)
-			}
-
-			for _, step := range selectedPackage.Install.Steps {
-				if installedPackage.Installation.Method == "latest" && strings.Contains(step, "git clone") {
-					step = strings.Replace(step, "--branch v", "", 1)
-					step = strings.Replace(step, "0.8.1", "", 1)
-					step = strings.Replace(step, "--single-branch", "", 1)
-				}
-				fmt.Printf("Executing: %s\n", step)
-				cmdParts := strings.Fields(step)
-				cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					log.Fatalf("Error executing step '%s': %v", step, err)
-				}
-			}
-
-			for _, binPath := range selectedPackage.Install.Binaries {
-				srcPath := filepath.Join(buildDir, binPath)
-				dstPath := filepath.Join(binDir, filepath.Base(binPath))
-				fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
-				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-					log.Printf("Error copying binary %s: %v", binPath, err)
-				}
-				if err := os.Chmod(dstPath, 0755); err != nil {
-					log.Printf("Error making binary executable %s: %v", dstPath, err)
-				}
-			}
-
-			for _, confPath := range selectedPackage.Install.Configs {
-				srcPath := filepath.Join(buildDir, confPath)
-				dstPath := filepath.Join(configDir, filepath.Base(confPath))
-
-				if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-					log.Printf("Warning: config file %s does not exist", srcPath)
-					continue
-				}
-
-				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-					log.Printf("Warning: could not copy config %s: %v", confPath, err)
-				} else {
-					fmt.Printf("Copied config %s to %s\n", confPath, dstPath)
-				}
-			}
-
-			for _, manPage := range selectedPackage.Install.Man {
-				srcPath := filepath.Join(buildDir, manPage)
-				dstPath := filepath.Join(manDir, filepath.Base(manPage))
-
-				if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-					log.Printf("Warning: man page %s does not exist", srcPath)
-					continue
-				}
-
-				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-					log.Printf("Warning: could not copy man page %s: %v", manPage, err)
-				} else {
-					fmt.Printf("Copied man page %s to %s\n", manPage, dstPath)
-				}
-			}
-
-			packageData, err = yaml.Marshal(selectedPackage)
-			if err != nil {
-				log.Fatalf("Error marshaling package data: %v", err)
-			}
-			if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
-				log.Fatalf("Error writing package config file: %v", err)
-			}
-
-			if config.Options.CleanupBuild {
-				if err := os.RemoveAll(buildDir); err != nil {
-					log.Printf("Warning: could not remove build directory: %v", err)
-				}
-			}
-
-			fmt.Printf("\nSuccessfully updated %s\n", selectedPackage.Name)
-			if installedPackage.Installation.Method == "latest" {
-				fmt.Printf("New Commit: %s\n", selectedPackage.Installation.ActualVersion)
-			} else {
-				fmt.Printf("New Version: %s\n", selectedPackage.Installation.ActualVersion)
-			}
-			fmt.Printf("Installation method: %s\n", selectedPackage.Installation.Method)
-			fmt.Printf("Updated by: %s\n", selectedPackage.Installation.InstalledBy)
-			fmt.Printf("Update time: %s\n", selectedPackage.Installation.InstalledAt.Format("2006-01-02 15:04:05"))
-			fmt.Printf("Binaries: %s\n", binDir)
-			fmt.Printf("Configs: %s\n", configDir)
-			fmt.Printf("Man pages: %s\n", manDir)
-
-			if len(selectedPackage.Install.Binaries) > 0 {
-				fmt.Printf("\nTo add the binaries to your PATH, add this line to your shell's RC file:\n")
-				fmt.Printf("export PATH=\"%s:$PATH\"\n", binDir)
-			}
-
+			updatePackage(selectedPackage, config)
 			return
 		}
 
 		fmt.Println("\nPackages with updates available:")
 		fmt.Println("-------------------------------")
 
-		updatesAvailable := []*pkg.Package{}
-
-		for _, installedPackage := range installedPackages {
+		var updatesAvailable []*pkg.Package
+		for _, installed := range installedPackages {
+			if installed.InstallMethod != updateInstallMethod {
+				continue
+			}
 			for _, p := range packages {
-				if p.Name == installedPackage.Name && installedPackage.Installation.Method != "latest" && p.Version != installedPackage.Installation.ActualVersion {
+				if p.Name == installed.Name && ((updateInstallMethod == "version" && p.Version != installed.Version) || (updateInstallMethod == "commit" && p.Commit != installed.Commit)) {
+					tags := strings.Join(p.Tags, ", ")
+					if tags == "" {
+						tags = "-"
+					}
+
 					fmt.Printf("\n%d) Name: %s\n", len(updatesAvailable)+1, p.Name)
-					fmt.Printf("Current Version: %s\n", installedPackage.Installation.ActualVersion)
-					fmt.Printf("Available Version: %s\n", p.Version)
+					fmt.Printf("Current Version/Commit: %s\n", installed.Version)
+					if updateInstallMethod == "version" {
+						fmt.Printf("Available Version: %s\n", p.Version)
+					} else {
+						fmt.Printf("Available Commit: %s\n", p.Commit)
+					}
 					fmt.Printf("Description: %s\n", p.Description)
+					fmt.Printf("Maintainer: %s\n", p.Maintainer)
+					if p.License != "" {
+						fmt.Printf("License: %s\n", p.License)
+					}
+					if p.Homepage != "" {
+						fmt.Printf("Homepage: %s\n", p.Homepage)
+					}
+					fmt.Printf("Tags: %s\n", tags)
+					fmt.Printf("Updated: %s\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
 
 					updatesAvailable = append(updatesAvailable, p)
 				}
@@ -401,193 +200,259 @@ var updateCmd = &cobra.Command{
 				continue
 			}
 
-			selectedPackage := updatesAvailable[num-1]
-			fmt.Println("\nUpdating package:", selectedPackage.Name)
+			p := updatesAvailable[num-1]
+			fmt.Println("\nSelected package details:")
+			fmt.Println("------------------------")
+			fmt.Printf("Name: %s\n", p.Name)
+			fmt.Printf("Installed Version/Commit: %s\n", installedPackages[0].Version)
+			if updateInstallMethod == "version" {
+				fmt.Printf("Available Version: %s\n", p.Version)
+			} else {
+				fmt.Printf("Available Commit: %s\n", p.Commit)
+			}
+			fmt.Printf("Description: %s\n", p.Description)
+			fmt.Printf("Maintainer: %s\n", p.Maintainer)
+			if p.License != "" {
+				fmt.Printf("License: %s\n", p.License)
+			}
+			if p.Homepage != "" {
+				fmt.Printf("Homepage: %s\n", p.Homepage)
+			}
+			fmt.Printf("Tags: %s\n", strings.Join(p.Tags, ", "))
+			fmt.Printf("Updated: %s\n\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-			// Почистване на съществуващите файлове
-			existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
-			if err := os.RemoveAll(existingConfigDir); err != nil {
-				log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
+			if !utils.AskForConfirmation("Proceed with update?") {
+				fmt.Println("Update cancelled.")
+				continue
 			}
 
-			for _, binPath := range selectedPackage.Install.Binaries {
+			updatePackage(p, config)
+			break
+		}
+	},
+}
+
+func updatePackage(selectedPackage *pkg.Package, config *cnfg.Config) {
+	fmt.Println("\nUpdating package:", selectedPackage.Name)
+
+	existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
+	if err := os.RemoveAll(existingConfigDir); err != nil {
+		log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
+	}
+
+	for _, binPath := range selectedPackage.Install.Binaries {
+		existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
+		if err := os.Remove(existingBinFile); err != nil {
+			log.Printf("Warning: could not remove existing binary %s: %v", existingBinFile, err)
+		}
+	}
+
+	packageConfigPath := filepath.Join(config.Paths.Configs, selectedPackage.Name, "package.yaml")
+	packageData, err := os.ReadFile(packageConfigPath)
+	if err == nil {
+		var previousPackage pkg.Package
+		if err := yaml.Unmarshal(packageData, &previousPackage); err == nil {
+			for _, binPath := range previousPackage.Install.Binaries {
 				existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
 				if err := os.Remove(existingBinFile); err != nil {
 					log.Printf("Warning: could not remove existing binary %s: %v", existingBinFile, err)
 				}
 			}
 
-			// Четене и почистване на предишната инсталация
-			packageConfigPath := filepath.Join(config.Paths.Configs, selectedPackage.Name, "package.yaml")
-			packageData, err := os.ReadFile(packageConfigPath)
-			if err == nil {
-				var previousPackage pkg.Package
-				if err := yaml.Unmarshal(packageData, &previousPackage); err == nil {
-					for _, binPath := range previousPackage.Install.Binaries {
-						existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
-						if err := os.Remove(existingBinFile); err != nil {
-							log.Printf("Warning: could not remove existing binary %s: %v", existingBinFile, err)
-						}
-					}
-
-					for _, confPath := range previousPackage.Install.Configs {
-						existingConfFile := filepath.Join(config.Paths.Configs, previousPackage.Name, filepath.Base(confPath))
-						if err := os.Remove(existingConfFile); err != nil {
-							log.Printf("Warning: could not remove existing config %s: %v", existingConfFile, err)
-						}
-					}
-
-					for _, manPage := range previousPackage.Install.Man {
-						existingManFile := filepath.Join(config.Paths.Man, filepath.Base(manPage))
-						if err := os.Remove(existingManFile); err != nil {
-							log.Printf("Warning: could not remove existing man page %s: %v", existingManFile, err)
-						}
-					}
+			for _, confPath := range previousPackage.Install.Configs {
+				existingConfFile := filepath.Join(config.Paths.Configs, previousPackage.Name, filepath.Base(confPath))
+				if err := os.Remove(existingConfFile); err != nil {
+					log.Printf("Warning: could not remove existing config %s: %v", existingConfFile, err)
 				}
 			}
 
-			binDir := config.Paths.Bin
-			configDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
-			buildDir := filepath.Join(config.Paths.Build, selectedPackage.Name)
-			manDir := config.Paths.Man
-
-			if _, err := os.Stat(buildDir); err == nil {
-				if utils.AskForConfirmation(fmt.Sprintf("Build directory %s exists. Remove it?", buildDir)) {
-					if err := os.RemoveAll(buildDir); err != nil {
-						log.Fatalf("Error removing build directory: %v", err)
-					}
-				} else {
-					fmt.Println("Installation cancelled.")
-					return
+			for _, manPage := range previousPackage.Install.Man {
+				existingManFile := filepath.Join(config.Paths.Man, filepath.Base(manPage))
+				if err := os.Remove(existingManFile); err != nil {
+					log.Printf("Warning: could not remove existing man page %s: %v", existingManFile, err)
 				}
-			}
-
-			for _, dir := range []string{binDir, configDir, buildDir, manDir} {
-				if err := utils.EnsureDirectoryExists(dir); err != nil {
-					log.Fatalf("Error creating directory %s: %v", dir, err)
-				}
-			}
-
-			if err := os.Chdir(buildDir); err != nil {
-				log.Fatalf("Error changing to directory %s: %v", buildDir, err)
-			}
-
-			// Обновяване на installation информацията
-			selectedPackage.Installation = pkg.Installation{
-				Method:        "specific",
-				ActualVersion: selectedPackage.Version,
-				InstalledAt:   time.Now().UTC(),
-				InstalledBy:   utils.GetCurrentUser(),
-			}
-
-			if selectedPackage.Installation.Method == "latest" {
-				cmd := exec.Command("git", "rev-parse", "HEAD")
-				cmd.Dir = buildDir
-				out, err := cmd.Output()
-				if err != nil {
-					log.Fatalf("Error getting current commit: %v", err)
-				}
-				commit := strings.TrimSpace(string(out))
-				selectedPackage.Installation.Method = "latest"
-				selectedPackage.Installation.ActualVersion = commit
-			}
-
-			for k, v := range selectedPackage.Install.Environment {
-				os.Setenv(k, v)
-			}
-
-			for _, step := range selectedPackage.Install.Steps {
-				if selectedPackage.Installation.Method == "latest" && strings.Contains(step, "git clone") {
-					step = strings.Replace(step, "--branch v", "", 1)
-					step = strings.Replace(step, "0.8.1", "", 1)
-					step = strings.Replace(step, "--single-branch", "", 1)
-				}
-				fmt.Printf("Executing: %s\n", step)
-				cmdParts := strings.Fields(step)
-				cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					log.Fatalf("Error executing step '%s': %v", step, err)
-				}
-			}
-
-			for _, binPath := range selectedPackage.Install.Binaries {
-				srcPath := filepath.Join(buildDir, binPath)
-				dstPath := filepath.Join(binDir, filepath.Base(binPath))
-				fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
-				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-					log.Printf("Error copying binary %s: %v", binPath, err)
-				}
-				if err := os.Chmod(dstPath, 0755); err != nil {
-					log.Printf("Error making binary executable %s: %v", dstPath, err)
-				}
-			}
-
-			for _, confPath := range selectedPackage.Install.Configs {
-				srcPath := filepath.Join(buildDir, confPath)
-				dstPath := filepath.Join(configDir, filepath.Base(confPath))
-
-				if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-					log.Printf("Warning: config file %s does not exist", srcPath)
-					continue
-				}
-
-				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-					log.Printf("Warning: could not copy config %s: %v", confPath, err)
-				} else {
-					fmt.Printf("Copied config %s to %s\n", confPath, dstPath)
-				}
-			}
-
-			for _, manPage := range selectedPackage.Install.Man {
-				srcPath := filepath.Join(buildDir, manPage)
-				dstPath := filepath.Join(manDir, filepath.Base(manPage))
-
-				if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-					log.Printf("Warning: man page %s does not exist", srcPath)
-					continue
-				}
-
-				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-					log.Printf("Warning: could not copy man page %s: %v", manPage, err)
-				} else {
-					fmt.Printf("Copied man page %s to %s\n", manPage, dstPath)
-				}
-			}
-
-			packageData, err = yaml.Marshal(selectedPackage)
-			if err != nil {
-				log.Fatalf("Error marshaling package data: %v", err)
-			}
-			if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
-				log.Fatalf("Error writing package config file: %v", err)
-			}
-
-			if config.Options.CleanupBuild {
-				if err := os.RemoveAll(buildDir); err != nil {
-					log.Printf("Warning: could not remove build directory: %v", err)
-				}
-			}
-
-			fmt.Printf("\nSuccessfully updated %s to version %s\n", selectedPackage.Name, selectedPackage.Version)
-			fmt.Printf("Installation method: %s\n", selectedPackage.Installation.Method)
-			fmt.Printf("Updated by: %s\n", selectedPackage.Installation.InstalledBy)
-			fmt.Printf("Update time: %s\n", selectedPackage.Installation.InstalledAt.Format("2006-01-02 15:04:05"))
-			fmt.Printf("Binaries: %s\n", binDir)
-			fmt.Printf("Configs: %s\n", configDir)
-			fmt.Printf("Man pages: %s\n", manDir)
-
-			if len(selectedPackage.Install.Binaries) > 0 {
-				fmt.Printf("\nTo add the binaries to your PATH, add this line to your shell's RC file:\n")
-				fmt.Printf("export PATH=\"%s:$PATH\"\n", binDir)
 			}
 		}
-	},
+	}
+
+	binDir := config.Paths.Bin
+	configDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
+	buildDir := filepath.Join(config.Paths.Build, selectedPackage.Name)
+	manDir := config.Paths.Man
+
+	if _, err := os.Stat(buildDir); err == nil {
+		if utils.AskForConfirmation(fmt.Sprintf("Build directory %s exists. Remove it?", buildDir)) {
+			if err := os.RemoveAll(buildDir); err != nil {
+				log.Fatalf("Error removing build directory: %v", err)
+			}
+		} else {
+			fmt.Println("Installation cancelled.")
+			return
+		}
+	}
+
+	for _, dir := range []string{binDir, configDir, buildDir, manDir} {
+		if err := utils.EnsureDirectoryExists(dir); err != nil {
+			log.Fatalf("Error creating directory %s: %v", dir, err)
+		}
+	}
+
+	if err := os.Chdir(buildDir); err != nil {
+		log.Fatalf("Error changing to directory %s: %v", buildDir, err)
+	}
+
+	for k, v := range selectedPackage.Install.Environment {
+		os.Setenv(k, v)
+	}
+
+	for _, step := range selectedPackage.Install.Steps {
+		fmt.Printf("Executing: %s\n", step)
+		cmdParts := strings.Fields(step)
+		cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("Error executing step '%s': %v", step, err)
+		}
+	}
+
+	for _, binPath := range selectedPackage.Install.Binaries {
+		srcPath := filepath.Join(buildDir, binPath)
+		dstPath := filepath.Join(binDir, filepath.Base(binPath))
+		if _, err := os.Lstat(dstPath); err == nil {
+			if err := os.Remove(dstPath); err != nil {
+				log.Printf("Error removing existing binary %s: %v", dstPath, err)
+			}
+		}
+		fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
+		if err := pkg.CopyFile(srcPath, dstPath); err != nil {
+			log.Printf("Error copying binary %s: %v", binPath, err)
+		}
+		if err := os.Chmod(dstPath, 0755); err != nil {
+			log.Printf("Error making binary executable %s: %v", dstPath, err)
+		}
+	}
+
+	for _, confPath := range selectedPackage.Install.Configs {
+		srcPath := filepath.Join(buildDir, confPath)
+		dstPath := filepath.Join(configDir, filepath.Base(confPath))
+
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			log.Printf("Warning: config file %s does not exist", srcPath)
+			continue
+		}
+
+		if err := pkg.CopyFile(srcPath, dstPath); err != nil {
+			log.Printf("Warning: could not copy config %s: %v", confPath, err)
+		} else {
+			fmt.Printf("Copied config %s to %s\n", confPath, dstPath)
+		}
+	}
+
+	for _, manPage := range selectedPackage.Install.Man {
+		srcPath := filepath.Join(buildDir, manPage)
+
+		ext := filepath.Ext(manPage)
+		if len(ext) < 2 {
+			log.Printf("Warning: could not determine section for %s", manPage)
+			continue
+		}
+
+		section := "man" + ext[1:]
+		sectionDir := filepath.Join(manDir, section)
+
+		if err := os.MkdirAll(sectionDir, 0755); err != nil {
+			log.Printf("Error creating man section directory %s: %v", sectionDir, err)
+			continue
+		}
+
+		dstPath := filepath.Join(sectionDir, filepath.Base(manPage))
+
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			log.Printf("Warning: man page %s does not exist", srcPath)
+			continue
+		}
+
+		if err := pkg.CopyFile(srcPath, dstPath); err != nil {
+			log.Printf("Warning: could not copy man page %s: %v", manPage, err)
+		} else {
+			fmt.Printf("Copied man page %s to %s\n", manPage, dstPath)
+		}
+	}
+
+	for _, additionalConfig := range selectedPackage.Install.AdditionalConfig {
+		dstPath := filepath.Join(configDir, additionalConfig.Filename)
+
+		dstDir := filepath.Dir(dstPath)
+		if err := os.MkdirAll(dstDir, 0755); err != nil {
+			log.Printf("Warning: could not create directory structure for %s: %v", dstPath, err)
+			continue
+		}
+
+		var content []byte
+		if strings.HasPrefix(additionalConfig.Content, "http://") || strings.HasPrefix(additionalConfig.Content, "https://") {
+			var err error
+			content, err = utils.DownloadContent(additionalConfig.Content)
+			if err != nil {
+				log.Printf("Warning: could not download content for %s: %v", additionalConfig.Filename, err)
+				continue
+			}
+		} else {
+			content = []byte(additionalConfig.Content)
+		}
+
+		if err := os.WriteFile(dstPath, content, 0644); err != nil {
+			log.Printf("Warning: could not write additional config %s: %v", additionalConfig.Filename, err)
+		} else {
+			fmt.Printf("Created additional config %s\n", dstPath)
+		}
+	}
+
+	packageConfigPath = filepath.Join(configDir, "package.yaml")
+	packageData, err = yaml.Marshal(selectedPackage)
+	if err != nil {
+		log.Fatalf("Error marshaling package data: %v", err)
+	}
+	if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
+		log.Fatalf("Error writing package config file: %v", err)
+	}
+
+	for _, script := range selectedPackage.PostInstall.Scripts {
+		scriptPath := filepath.Join(buildDir, script.Filename)
+		if err := os.WriteFile(scriptPath, []byte(script.Content), 0755); err != nil {
+			log.Printf("Warning: could not write post-install script %s: %v", script.Filename, err)
+		} else {
+			fmt.Printf("Created post-install script %s\n", scriptPath)
+
+			dstScriptPath := filepath.Join(binDir, filepath.Base(script.Filename))
+			if err := os.Rename(scriptPath, dstScriptPath); err != nil {
+				log.Printf("Error moving script %s: %v", scriptPath, err)
+			}
+			if err := os.Chmod(dstScriptPath, 0755); err != nil {
+				log.Printf("Error making script executable %s: %v", dstScriptPath, err)
+			}
+		}
+	}
+
+	if config.Options.CleanupBuild {
+		if err := os.RemoveAll(buildDir); err != nil {
+			log.Printf("Warning: could not remove build directory: %v", err)
+		}
+	}
+
+	fmt.Printf("\nSuccessfully updated %s to version %s\n", selectedPackage.Name, selectedPackage.Version)
+	fmt.Printf("Binaries: %s\n", binDir)
+	fmt.Printf("Configs: %s\n", configDir)
+	fmt.Printf("Man pages: %s\n", manDir)
+
+	if len(selectedPackage.Install.Binaries) > 0 {
+		fmt.Printf("\nTo add the binaries to your PATH, add this line to your shell's RC file:\n")
+		fmt.Printf("export PATH=\"%s:$PATH\"\n", binDir)
+	}
 }
 
 func init() {
 	updateCmd.Flags().BoolVarP(&forceRefreshInUpdate, "force-refresh", "f", false, "Force refresh of the registry cache")
-	updateCmd.Flags().BoolVarP(&useLatestInUpdate, "latest", "l", false, "Update to the latest commit")
+	updateCmd.Flags().StringVarP(&updateInstallMethod, "install-method", "m", "", "Installation method: version or commit")
 	rootCmd.AddCommand(updateCmd)
 }

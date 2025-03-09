@@ -1,26 +1,34 @@
 name: Check Registry Updates
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   schedule:
     - cron: '0 0 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
 jobs:
-  check-registry:
+  check-for-updates:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }} # Ensure the token input is supplied here
-          fetch-depth: 1
+      - name: Checkout application repository
+        uses: actions/checkout@v4
+      - name: Clone registry repository
+        run: |
+          git clone https://oauth2:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/lvim-tech/clipack-registry.git registry
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.16'
-      - name: Run your script
-        run: go run main.go
-
+          go-version: '1.23'
+      - name: Install dependencies
+        run: go mod download
+      - name: Configure Git for registry
+        run: |
+          cd registry
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config credential.helper 'store --file=.git/credentials'
+          echo "https://oauth2:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > .git/credentials
+          chmod 600 .git/credentials
+      - name: Run registry check
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: go run scripts/check_registry.go

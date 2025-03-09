@@ -1,59 +1,53 @@
 name: Check Registry Updates
-
 on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-
 permissions:
-  contents: write  # Добавяне на write разрешение за съдържание
-
+  contents: write # Добавяне на write разрешение за съдържание
 jobs:
   check-for-updates:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout application repository
-      uses: actions/checkout@v4
+      - name: Checkout application repository
+        uses: actions/checkout@v4
+      - name: Checkout registry repository
+        uses: actions/checkout@v4
+        with:
+          repository: lvim-tech/clipack-registry
+          path: registry
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }} # Това е задължително за външно хранилище
+          ssh-strict: true
+          persist-credentials: true
+          clean: true
+          fetch-depth: 1
+          lfs: false
+          submodules: false
+          set-safe-directory: true
+          ssh-user: git
+          sparse-checkout-cone-mode: true
+          fetch-tags: false
+          show-progress: true
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23' # Съобразено с вашия go.mod
+      - name: Install dependencies
+        run: go mod download
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Run registry check
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: go run scripts/check_registry.go
+      - name: Commit changes if any
+        working-directory: registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          git add .
+          git commit -m 'Automated registry update' || echo "No changes to commit"
+          git push
 
-    - name: Checkout registry repository
-      uses: actions/checkout@v4
-      with:
-        repository: lvim-tech/clipack-registry
-        path: registry
-        token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}  # Уверете се, че токенът е предоставен
-        ssh-strict: true
-        persist-credentials: true
-        clean: true
-        fetch-depth: 1
-        lfs: false
-        submodules: false
-        set-safe-directory: true
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.23'  # Променено обратно на 1.23 за съвместимост с go.mod
-
-    - name: Install dependencies
-      run: go mod download
-
-    - name: Configure Git
-      run: |
-        git config --global user.name 'github-actions[bot]'
-        git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-    - name: Run registry check
-      env:
-        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      run: go run scripts/check_registry.go
-
-    - name: Commit changes if any
-      working-directory: registry
-      if: success()
-      run: |
-        git add .
-        git commit -m 'Automated registry update' || echo "No changes to commit"
-        git push
-      env:
-        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

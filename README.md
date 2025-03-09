@@ -18,12 +18,12 @@ To install Clipack, follow these steps:
 2. Build the program:
 
     ```sh
-    go build -o clipack
+    go build -o bin/clipack
     ```
 
 3. Move the executable to your executable files directory:
     ```sh
-    mv clipack /usr/local/bin/
+    mv bin/clipack /usr/local/bin/
     ```
 
 ## Usage
@@ -119,26 +119,46 @@ clipack list --force-refresh
 Here is an example of a package configuration:
 
 ```yaml
-steps:
-    - git clone --branch v0.20.22 --single-branch https://github.com/eza-community/eza.git .
-    - cargo build --release
-    - mkdir -p man/man1 man/man5
-    - pandoc man/eza.1.md -s -t man -o man/man1/eza.1
-    - pandoc man/eza_colors-explanation.5.md -s -t man -o man/man5/eza_colors-explanation.5
-    - pandoc man/eza_colors.5.md -s -t man -o man/man5/eza_colors.5
+name: vivid
+version: v0.10.1
+commit: 782907221045fbcd4df62b2061f92fcaf6b637aa
+description: A themeable LS_COLORS generator with a rich filetype database.
+homepage: https://github.com/sharkdp/vivid
+license: MIT
+maintainer: sharkdp
+updated_at: 2025-02-24T13:45:00Z
+tags:
+    - cli
+    - ls
+    - colors
+    - themes
+install:
+    source:
+        type: git
+        url: https://github.com/sharkdp/vivid.git
+        ref: main
+    steps:
+        - git clone https://github.com/sharkdp/vivid.git .
+        - cargo build --release
+    binaries:
+        - target/release/vivid
+    additional-config:
+        - filename: config.sh
+          content: |
+              #!/usr/bin/env bash
 
-binaries:
-    - target/release/eza
+              BASE_PATH=$(grep 'base:' $HOME/.config/clipack/config.yaml | sed 's/.*base: //')
 
-man:
-    - man/man1/eza.1
-    - man/man5/eza_colors-explanation.5
-    - man/man5/eza_colors.5
+              if [ -z "$THEME" ]; then
+                  THEME="LvimDark"
+              fi
+
+              export LS_COLORS="$($BASE_PATH/bin/vivid generate $BASE_PATH/configs/vivid/$THEME.yml)"
 ```
 
 ## Registry
 
-Clipack uses package registry files from [Clipack Registry](https://github.com/lvim-tech/clipack-registry).
+Clipack uses package registry files from [Clipack Registry](https://github.com/lvim-tech/clipack-registry). You can specify a different registry URL in the configuration file if needed.
 
 ## License
 

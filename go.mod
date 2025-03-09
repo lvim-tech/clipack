@@ -2,8 +2,6 @@ module github.com/lvim-tech/clipack
 
 go 1.23
 
-toolchain go1.24.0
-
 require (
 	github.com/google/go-github/v41 v41.0.0
 	github.com/spf13/cobra v1.9.1

@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"strings"
+	"time"
 )
 
 func AskForConfirmation(s string) bool {
@@ -57,4 +59,28 @@ func DownloadContent(url string) ([]byte, error) {
     }
 
     return content, nil
+}
+
+func GetCurrentUser() string {
+    currentUser, err := user.Current()
+    if err != nil {
+        return "unknown"
+    }
+    return currentUser.Username
+}
+
+func FormatDateTime(t time.Time) string {
+    return t.UTC().Format("2006-01-02 15:04:05")
+}
+
+func GetCurrentDateTime() time.Time {
+    return time.Now().UTC()
+}
+
+func CompareVersions(currentVersion, newVersion string) bool {
+    return currentVersion != newVersion
+}
+
+func IsLatestInstallation(method string) bool {
+    return method == "latest"
 }

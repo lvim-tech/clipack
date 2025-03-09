@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
@@ -17,7 +18,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var forceRefreshInUpdate bool
+var (
+	forceRefreshInUpdate bool
+	useLatestInUpdate    bool
+)
 
 var updateCmd = &cobra.Command{
 	Use:   "update [package-name]",
@@ -74,7 +78,6 @@ var updateCmd = &cobra.Command{
 		if len(packages) == 0 {
 			log.Fatalf("No packages found in registry")
 		}
-
 		installedPackages, err := pkg.LoadInstalledPackages(config)
 		if err != nil {
 			log.Fatalf("Error loading installed packages: %v", err)
@@ -83,28 +86,79 @@ var updateCmd = &cobra.Command{
 		if len(args) > 0 {
 			packageName := args[0]
 			var selectedPackage *pkg.Package
+			var installedPackage *pkg.Package
 
+			// Намиране на инсталирания пакет
 			for _, installed := range installedPackages {
 				if installed.Name == packageName {
-					for _, p := range packages {
-						if p.Name == installed.Name && p.Version != installed.Version {
-							selectedPackage = p
-							break
-						}
-					}
+					installedPackage = installed
+					break
+				}
+			}
+
+			if installedPackage == nil {
+				fmt.Printf("Package %s is not installed\n", packageName)
+				return
+			}
+
+			// Намиране на последната версия
+			for _, p := range packages {
+				if p.Name == packageName {
+					selectedPackage = p
 					break
 				}
 			}
 
 			if selectedPackage == nil {
-				fmt.Printf("No updates available for package %s\n", packageName)
+				fmt.Printf("Package %s not found in registry\n", packageName)
+				return
+			}
+
+			// Проверка дали е нужен ъпдейт
+			shouldUpdate := false
+			updateReason := ""
+			latestCommit := ""
+
+			if installedPackage.Installation.Method == "latest" {
+				// Получаване на последния комит от онлайн хостването на пакета
+				cmd := exec.Command("git", "ls-remote", selectedPackage.Homepage, "HEAD")
+				out, err := cmd.Output()
+				if err != nil {
+					log.Printf("Error getting latest commit for %s: %v", selectedPackage.Name, err)
+				}
+				latestCommit = strings.Fields(string(out))[0]
+
+				if latestCommit != installedPackage.Installation.ActualVersion {
+					shouldUpdate = true
+					updateReason = fmt.Sprintf("new commit available (%s -> %s)", installedPackage.Installation.ActualVersion, latestCommit)
+				}
+			} else {
+				if selectedPackage.Version != installedPackage.Installation.ActualVersion {
+					shouldUpdate = true
+					updateReason = fmt.Sprintf("new version available (%s -> %s)", installedPackage.Installation.ActualVersion, selectedPackage.Version)
+				}
+			}
+
+			// Поправка за показване на текущата версия като "latest"
+			currentVersion := installedPackage.Installation.ActualVersion
+			if installedPackage.Installation.Method == "latest" {
+				currentVersion = "latest"
+			}
+
+			if !shouldUpdate {
+				fmt.Printf("%s is up to date (version %s)\n", packageName, currentVersion)
 				return
 			}
 
 			fmt.Println("\nSelected package details:")
 			fmt.Println("------------------------")
 			fmt.Printf("Name: %s\n", selectedPackage.Name)
-			fmt.Printf("Version: %s\n", selectedPackage.Version)
+			fmt.Printf("Current Version: %s\n", currentVersion)
+			if installedPackage.Installation.Method == "latest" {
+				fmt.Printf("New Commit: %s\n", latestCommit)
+			} else {
+				fmt.Printf("New Version: %s\n", selectedPackage.Version)
+			}
 			fmt.Printf("Description: %s\n", selectedPackage.Description)
 			fmt.Printf("Maintainer: %s\n", selectedPackage.Maintainer)
 			if selectedPackage.License != "" {
@@ -114,7 +168,8 @@ var updateCmd = &cobra.Command{
 				fmt.Printf("Homepage: %s\n", selectedPackage.Homepage)
 			}
 			fmt.Printf("Tags: %s\n", strings.Join(selectedPackage.Tags, ", "))
-			fmt.Printf("Updated: %s\n\n", selectedPackage.UpdatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Updated: %s\n", selectedPackage.UpdatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Update Reason: %s\n\n", updateReason)
 
 			if !utils.AskForConfirmation("Proceed with update?") {
 				fmt.Println("Update cancelled.")
@@ -123,6 +178,7 @@ var updateCmd = &cobra.Command{
 
 			fmt.Println("\nUpdating package:", selectedPackage.Name)
 
+			// Почистване на съществуващите файлове
 			existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
 			if err := os.RemoveAll(existingConfigDir); err != nil {
 				log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
@@ -135,6 +191,7 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
+			// Четене и почистване на предишната инсталация
 			packageConfigPath := filepath.Join(config.Paths.Configs, selectedPackage.Name, "package.yaml")
 			packageData, err := os.ReadFile(packageConfigPath)
 			if err == nil {
@@ -189,13 +246,28 @@ var updateCmd = &cobra.Command{
 				log.Fatalf("Error changing to directory %s: %v", buildDir, err)
 			}
 
+			// Обновяване на installation информацията
+			if installedPackage.Installation.Method == "latest" {
+				cmd := exec.Command("git", "rev-parse", "HEAD")
+				cmd.Dir = buildDir
+				out, err := cmd.Output()
+				if err != nil {
+					log.Fatalf("Error getting current commit: %v", err)
+				}
+				commit := strings.TrimSpace(string(out))
+				selectedPackage.Installation.Method = "latest"
+				selectedPackage.Installation.ActualVersion = commit
+			}
+
 			for k, v := range selectedPackage.Install.Environment {
 				os.Setenv(k, v)
 			}
 
 			for _, step := range selectedPackage.Install.Steps {
-				if strings.Contains(step, "git clone") && !strings.Contains(step, " --branch v") {
-					step = strings.Replace(step, " --branch ", " --branch v", 1)
+				if installedPackage.Installation.Method == "latest" && strings.Contains(step, "git clone") {
+					step = strings.Replace(step, "--branch v", "", 1)
+					step = strings.Replace(step, "0.8.1", "", 1)
+					step = strings.Replace(step, "--single-branch", "", 1)
 				}
 				fmt.Printf("Executing: %s\n", step)
 				cmdParts := strings.Fields(step)
@@ -210,11 +282,6 @@ var updateCmd = &cobra.Command{
 			for _, binPath := range selectedPackage.Install.Binaries {
 				srcPath := filepath.Join(buildDir, binPath)
 				dstPath := filepath.Join(binDir, filepath.Base(binPath))
-				if _, err := os.Lstat(dstPath); err == nil {
-					if err := os.Remove(dstPath); err != nil {
-						log.Printf("Error removing existing binary %s: %v", dstPath, err)
-					}
-				}
 				fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
 				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
 					log.Printf("Error copying binary %s: %v", binPath, err)
@@ -242,22 +309,7 @@ var updateCmd = &cobra.Command{
 
 			for _, manPage := range selectedPackage.Install.Man {
 				srcPath := filepath.Join(buildDir, manPage)
-
-				ext := filepath.Ext(manPage)
-				if len(ext) < 2 {
-					log.Printf("Warning: could not determine section for %s", manPage)
-					continue
-				}
-
-				section := "man" + ext[1:]
-				sectionDir := filepath.Join(manDir, section)
-
-				if err := os.MkdirAll(sectionDir, 0755); err != nil {
-					log.Printf("Error creating man section directory %s: %v", sectionDir, err)
-					continue
-				}
-
-				dstPath := filepath.Join(sectionDir, filepath.Base(manPage))
+				dstPath := filepath.Join(manDir, filepath.Base(manPage))
 
 				if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 					log.Printf("Warning: man page %s does not exist", srcPath)
@@ -271,44 +323,12 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			for _, additionalConfig := range selectedPackage.Install.AdditionalConfig {
-				dstPath := filepath.Join(configDir, additionalConfig.Filename)
-
-				dstDir := filepath.Dir(dstPath)
-				if err := os.MkdirAll(dstDir, 0755); err != nil {
-					log.Printf("Warning: could not create directory structure for %s: %v", dstPath, err)
-					continue
-				}
-
-				if err := os.WriteFile(dstPath, []byte(additionalConfig.Content), 0644); err != nil {
-					log.Printf("Warning: could not write additional config %s: %v", additionalConfig.Filename, err)
-				} else {
-					fmt.Printf("Created additional config %s\n", dstPath)
-				}
-			}
-
+			packageData, err = yaml.Marshal(selectedPackage)
 			if err != nil {
 				log.Fatalf("Error marshaling package data: %v", err)
 			}
 			if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
 				log.Fatalf("Error writing package config file: %v", err)
-			}
-
-			for _, script := range selectedPackage.PostInstall.Scripts {
-				scriptPath := filepath.Join(buildDir, script.Filename)
-				if err := os.WriteFile(scriptPath, []byte(script.Content), 0755); err != nil {
-					log.Printf("Warning: could not write post-install script %s: %v", script.Filename, err)
-				} else {
-					fmt.Printf("Created post-install script %s\n", scriptPath)
-
-					dstScriptPath := filepath.Join(binDir, filepath.Base(script.Filename))
-					if err := os.Rename(scriptPath, dstScriptPath); err != nil {
-						log.Printf("Error moving script %s: %v", scriptPath, err)
-					}
-					if err := os.Chmod(dstScriptPath, 0755); err != nil {
-						log.Printf("Error making script executable %s: %v", dstScriptPath, err)
-					}
-				}
 			}
 
 			if config.Options.CleanupBuild {
@@ -317,7 +337,15 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			fmt.Printf("\nSuccessfully updated %s to version %s\n", selectedPackage.Name, selectedPackage.Version)
+			fmt.Printf("\nSuccessfully updated %s\n", selectedPackage.Name)
+			if installedPackage.Installation.Method == "latest" {
+				fmt.Printf("New Commit: %s\n", selectedPackage.Installation.ActualVersion)
+			} else {
+				fmt.Printf("New Version: %s\n", selectedPackage.Installation.ActualVersion)
+			}
+			fmt.Printf("Installation method: %s\n", selectedPackage.Installation.Method)
+			fmt.Printf("Updated by: %s\n", selectedPackage.Installation.InstalledBy)
+			fmt.Printf("Update time: %s\n", selectedPackage.Installation.InstalledAt.Format("2006-01-02 15:04:05"))
 			fmt.Printf("Binaries: %s\n", binDir)
 			fmt.Printf("Configs: %s\n", configDir)
 			fmt.Printf("Man pages: %s\n", manDir)
@@ -333,28 +361,15 @@ var updateCmd = &cobra.Command{
 		fmt.Println("\nPackages with updates available:")
 		fmt.Println("-------------------------------")
 
-		var updatesAvailable []*pkg.Package
-		for _, installed := range installedPackages {
-			for _, p := range packages {
-				if p.Name == installed.Name && p.Version != installed.Version {
-					tags := strings.Join(p.Tags, ", ")
-					if tags == "" {
-						tags = "-"
-					}
+		updatesAvailable := []*pkg.Package{}
 
+		for _, installedPackage := range installedPackages {
+			for _, p := range packages {
+				if p.Name == installedPackage.Name && installedPackage.Installation.Method != "latest" && p.Version != installedPackage.Installation.ActualVersion {
 					fmt.Printf("\n%d) Name: %s\n", len(updatesAvailable)+1, p.Name)
-					fmt.Printf("Current Version: %s\n", installed.Version)
+					fmt.Printf("Current Version: %s\n", installedPackage.Installation.ActualVersion)
 					fmt.Printf("Available Version: %s\n", p.Version)
 					fmt.Printf("Description: %s\n", p.Description)
-					fmt.Printf("Maintainer: %s\n", p.Maintainer)
-					if p.License != "" {
-						fmt.Printf("License: %s\n", p.License)
-					}
-					if p.Homepage != "" {
-						fmt.Printf("Homepage: %s\n", p.Homepage)
-					}
-					fmt.Printf("Tags: %s\n", tags)
-					fmt.Printf("Updated: %s\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
 
 					updatesAvailable = append(updatesAvailable, p)
 				}
@@ -386,42 +401,24 @@ var updateCmd = &cobra.Command{
 				continue
 			}
 
-			p := updatesAvailable[num-1]
-			fmt.Println("\nSelected package details:")
-			fmt.Println("------------------------")
-			fmt.Printf("Name: %s\n", p.Name)
-			fmt.Printf("Version: %s\n", p.Version)
-			fmt.Printf("Description: %s\n", p.Description)
-			fmt.Printf("Maintainer: %s\n", p.Maintainer)
-			if p.License != "" {
-				fmt.Printf("License: %s\n", p.License)
-			}
-			if p.Homepage != "" {
-				fmt.Printf("Homepage: %s\n", p.Homepage)
-			}
-			fmt.Printf("Tags: %s\n", strings.Join(p.Tags, ", "))
-			fmt.Printf("Updated: %s\n\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
+			selectedPackage := updatesAvailable[num-1]
+			fmt.Println("\nUpdating package:", selectedPackage.Name)
 
-			if !utils.AskForConfirmation("Proceed with update?") {
-				fmt.Println("Update cancelled.")
-				continue
-			}
-
-			fmt.Println("\nUpdating package:", p.Name)
-
-			existingConfigDir := filepath.Join(config.Paths.Configs, p.Name)
+			// Почистване на съществуващите файлове
+			existingConfigDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
 			if err := os.RemoveAll(existingConfigDir); err != nil {
 				log.Printf("Warning: could not remove existing config directory %s: %v", existingConfigDir, err)
 			}
 
-			for _, binPath := range p.Install.Binaries {
+			for _, binPath := range selectedPackage.Install.Binaries {
 				existingBinFile := filepath.Join(config.Paths.Bin, filepath.Base(binPath))
 				if err := os.Remove(existingBinFile); err != nil {
 					log.Printf("Warning: could not remove existing binary %s: %v", existingBinFile, err)
 				}
 			}
 
-			packageConfigPath := filepath.Join(config.Paths.Configs, p.Name, "package.yaml")
+			// Четене и почистване на предишната инсталация
+			packageConfigPath := filepath.Join(config.Paths.Configs, selectedPackage.Name, "package.yaml")
 			packageData, err := os.ReadFile(packageConfigPath)
 			if err == nil {
 				var previousPackage pkg.Package
@@ -450,8 +447,8 @@ var updateCmd = &cobra.Command{
 			}
 
 			binDir := config.Paths.Bin
-			configDir := filepath.Join(config.Paths.Configs, p.Name)
-			buildDir := filepath.Join(config.Paths.Build, p.Name)
+			configDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
+			buildDir := filepath.Join(config.Paths.Build, selectedPackage.Name)
 			manDir := config.Paths.Man
 
 			if _, err := os.Stat(buildDir); err == nil {
@@ -475,13 +472,35 @@ var updateCmd = &cobra.Command{
 				log.Fatalf("Error changing to directory %s: %v", buildDir, err)
 			}
 
-			for k, v := range p.Install.Environment {
+			// Обновяване на installation информацията
+			selectedPackage.Installation = pkg.Installation{
+				Method:        "specific",
+				ActualVersion: selectedPackage.Version,
+				InstalledAt:   time.Now().UTC(),
+				InstalledBy:   utils.GetCurrentUser(),
+			}
+
+			if selectedPackage.Installation.Method == "latest" {
+				cmd := exec.Command("git", "rev-parse", "HEAD")
+				cmd.Dir = buildDir
+				out, err := cmd.Output()
+				if err != nil {
+					log.Fatalf("Error getting current commit: %v", err)
+				}
+				commit := strings.TrimSpace(string(out))
+				selectedPackage.Installation.Method = "latest"
+				selectedPackage.Installation.ActualVersion = commit
+			}
+
+			for k, v := range selectedPackage.Install.Environment {
 				os.Setenv(k, v)
 			}
 
-			for _, step := range p.Install.Steps {
-				if strings.Contains(step, "git clone") && !strings.Contains(step, " --branch v") {
-					step = strings.Replace(step, " --branch ", " --branch v", 1)
+			for _, step := range selectedPackage.Install.Steps {
+				if selectedPackage.Installation.Method == "latest" && strings.Contains(step, "git clone") {
+					step = strings.Replace(step, "--branch v", "", 1)
+					step = strings.Replace(step, "0.8.1", "", 1)
+					step = strings.Replace(step, "--single-branch", "", 1)
 				}
 				fmt.Printf("Executing: %s\n", step)
 				cmdParts := strings.Fields(step)
@@ -493,14 +512,9 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			for _, binPath := range p.Install.Binaries {
+			for _, binPath := range selectedPackage.Install.Binaries {
 				srcPath := filepath.Join(buildDir, binPath)
 				dstPath := filepath.Join(binDir, filepath.Base(binPath))
-				if _, err := os.Lstat(dstPath); err == nil {
-					if err := os.Remove(dstPath); err != nil {
-						log.Printf("Error removing existing binary %s: %v", dstPath, err)
-					}
-				}
 				fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
 				if err := pkg.CopyFile(srcPath, dstPath); err != nil {
 					log.Printf("Error copying binary %s: %v", binPath, err)
@@ -510,7 +524,7 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			for _, confPath := range p.Install.Configs {
+			for _, confPath := range selectedPackage.Install.Configs {
 				srcPath := filepath.Join(buildDir, confPath)
 				dstPath := filepath.Join(configDir, filepath.Base(confPath))
 
@@ -526,7 +540,7 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			for _, manPage := range p.Install.Man {
+			for _, manPage := range selectedPackage.Install.Man {
 				srcPath := filepath.Join(buildDir, manPage)
 				dstPath := filepath.Join(manDir, filepath.Base(manPage))
 
@@ -542,38 +556,12 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			for _, additionalConfig := range p.Install.AdditionalConfig {
-				dstPath := filepath.Join(configDir, additionalConfig.Filename)
-
-				if err := os.WriteFile(dstPath, []byte(additionalConfig.Content), 0644); err != nil {
-					log.Printf("Warning: could not write additional config %s: %v", additionalConfig.Filename, err)
-				} else {
-					fmt.Printf("Created additional config %s\n", dstPath)
-				}
-			}
-
+			packageData, err = yaml.Marshal(selectedPackage)
 			if err != nil {
 				log.Fatalf("Error marshaling package data: %v", err)
 			}
 			if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
 				log.Fatalf("Error writing package config file: %v", err)
-			}
-
-			for _, script := range p.PostInstall.Scripts {
-				scriptPath := filepath.Join(buildDir, script.Filename)
-				if err := os.WriteFile(scriptPath, []byte(script.Content), 0755); err != nil {
-					log.Printf("Warning: could not write post-install script %s: %v", script.Filename, err)
-				} else {
-					fmt.Printf("Created post-install script %s\n", scriptPath)
-
-					dstScriptPath := filepath.Join(binDir, filepath.Base(script.Filename))
-					if err := os.Rename(scriptPath, dstScriptPath); err != nil {
-						log.Printf("Error moving script %s: %v", scriptPath, err)
-					}
-					if err := os.Chmod(dstScriptPath, 0755); err != nil {
-						log.Printf("Error making script executable %s: %v", dstScriptPath, err)
-					}
-				}
 			}
 
 			if config.Options.CleanupBuild {
@@ -582,22 +570,24 @@ var updateCmd = &cobra.Command{
 				}
 			}
 
-			fmt.Printf("\nSuccessfully updated %s to version %s\n", p.Name, p.Version)
+			fmt.Printf("\nSuccessfully updated %s to version %s\n", selectedPackage.Name, selectedPackage.Version)
+			fmt.Printf("Installation method: %s\n", selectedPackage.Installation.Method)
+			fmt.Printf("Updated by: %s\n", selectedPackage.Installation.InstalledBy)
+			fmt.Printf("Update time: %s\n", selectedPackage.Installation.InstalledAt.Format("2006-01-02 15:04:05"))
 			fmt.Printf("Binaries: %s\n", binDir)
 			fmt.Printf("Configs: %s\n", configDir)
 			fmt.Printf("Man pages: %s\n", manDir)
 
-			if len(p.Install.Binaries) > 0 {
+			if len(selectedPackage.Install.Binaries) > 0 {
 				fmt.Printf("\nTo add the binaries to your PATH, add this line to your shell's RC file:\n")
 				fmt.Printf("export PATH=\"%s:$PATH\"\n", binDir)
 			}
-
-			break
 		}
 	},
 }
 
 func init() {
 	updateCmd.Flags().BoolVarP(&forceRefreshInUpdate, "force-refresh", "f", false, "Force refresh of the registry cache")
+	updateCmd.Flags().BoolVarP(&useLatestInUpdate, "latest", "l", false, "Update to the latest commit")
 	rootCmd.AddCommand(updateCmd)
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lvim-tech/clipack/cnfg"
+	"github.com/lvim-tech/clipack/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,6 +24,13 @@ type Install struct {
 	Configs          []string           `yaml:"configs,omitempty"`
 	Man              []string           `yaml:"man,omitempty"`
 	AdditionalConfig []AdditionalConfig `yaml:"additional-config,omitempty"`
+}
+
+type Installation struct {
+    Method        string    `yaml:"method"`
+    ActualVersion string    `yaml:"actual_version"`
+    InstalledAt   time.Time `yaml:"installed_at"`
+    InstalledBy   string    `yaml:"installed_by"`
 }
 
 type AdditionalConfig struct {
@@ -51,6 +59,7 @@ type Package struct {
 	Homepage    string      `yaml:"homepage"`
 	Install     Install     `yaml:"install"`
 	PostInstall PostInstall `yaml:"post-install,omitempty"`
+	Installation Installation `yaml:"installation,omitempty"`
 }
 
 func LoadAllPackagesFromDir(registryDir string) ([]*Package, error) {
@@ -159,4 +168,20 @@ func LoadInstalledPackages(config *cnfg.Config) ([]*Package, error) {
 	}
 
 	return packages, nil
+}
+
+func CreateInstallationInfo(method string, version string) Installation {
+    return Installation{
+        Method:        method,
+        ActualVersion: version,
+        InstalledAt:   time.Now(),
+        InstalledBy:   utils.GetCurrentUser(), // трябва да се добави в utils
+    }
+}
+
+func (p *Package) NeedsUpdate(newVersion string) bool {
+    if p.Installation.Method == "latest" {
+        return true
+    }
+    return p.Version != newVersion // стандартна проверка за specific
 }

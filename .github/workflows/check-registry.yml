@@ -1,0 +1,43 @@
+name: Check Registry Updates
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-for-updates:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout application repository
+      uses: actions/checkout@v2
+
+    - name: Checkout registry repository
+      uses: actions/checkout@v2
+      with:
+        repository: lvim-tech/clipack-registry
+        path: registry
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: '1.19'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run registry check
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: go run cmd/check_registry.go
+
+    - name: Commit changes if any
+      working-directory: registry
+      if: success()
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git add .
+        git commit -m 'Automated registry update' || echo "No changes to commit"
+        git push

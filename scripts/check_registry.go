@@ -96,7 +96,6 @@ func main() {
     tc := oauth2.NewClient(ctx, ts)
     client := github.NewClient(tc)
 
-    // Четене на index.yaml
     indexData, err := ioutil.ReadFile(filepath.Join("registry", "index.yaml"))
     if err != nil {
         log.Fatalf("Error reading index.yaml: %v", err)
@@ -148,7 +147,6 @@ func main() {
     }
 
     if updated {
-        // Комитване на промените
         cmd := exec.Command("git", "add", ".")
         cmd.Dir = "registry"
         err := cmd.Run()
@@ -156,7 +154,8 @@ func main() {
             log.Fatalf("Error adding changes to git: %v", err)
         }
 
-        cmd = exec.Command("git", "commit", "-m", "Automated registry update")
+        commitMessage := fmt.Sprintf("Last registry update: %s", time.Now().Format(time.RFC3339))
+        cmd = exec.Command("git", "commit", "-m", commitMessage)
         cmd.Dir = "registry"
         output, err := cmd.CombinedOutput()
         if err != nil {

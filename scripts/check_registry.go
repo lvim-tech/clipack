@@ -83,9 +83,9 @@ func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, s
 }
 
 func main() {
-    token := os.Getenv("GH_TOKEN")
+    token := os.Getenv("CLIPACK")
     if token == "" {
-        log.Fatalf("GH_TOKEN environment variable is required")
+        log.Fatalf("CLIPACK environment variable is required")
     }
 
     ctx := context.Background()

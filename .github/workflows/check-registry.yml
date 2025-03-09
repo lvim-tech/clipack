@@ -38,5 +38,5 @@ jobs:
 
     - name: Run check registry script
       env:
-        GH_TOKEN: ${{ secrets.CLIPACK }}
+        CLIPACK: ${{ secrets.CLIPACK }}
       run: go run scripts/check_registry.go

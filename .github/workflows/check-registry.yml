@@ -21,7 +21,14 @@ jobs:
       with:
         repository: lvim-tech/clipack-registry
         path: registry
-        token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}  # Уверете се, че токенът е предоставен
+        token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        ssh-strict: true
+        persist-credentials: true
+        clean: true
+        fetch-depth: 1
+        lfs: false
+        submodules: false
+        set-safe-directory: true
 
     - name: Set up Go
       uses: actions/setup-go@v2

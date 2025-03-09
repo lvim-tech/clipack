@@ -1,52 +1,26 @@
 name: Check Registry Updates
 on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   schedule:
     - cron: '0 0 * * *'
-  workflow_dispatch:
-permissions:
-  contents: write
 jobs:
-  check-for-updates:
+  check-registry:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout application repository
-        uses: actions/checkout@v4
-      - name: Checkout registry repository
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v2
         with:
-          repository: lvim-tech/clipack-registry
-          path: registry
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }} # Ensure this secret is present
-          ssh-strict: true
-          persist-credentials: true
-          clean: true
+          token: ${{ secrets.GITHUB_TOKEN }} # Ensure the token input is supplied here
           fetch-depth: 1
-          lfs: false
-          submodules: false
-          set-safe-directory: true
-          ssh-user: git
-          sparse-checkout-cone-mode: true
-          fetch-tags: false
-          show-progress: true
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v2
         with:
-          go-version: '1.23'
-      - name: Install dependencies
-        run: go mod download
-      - name: Configure Git
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
-      - name: Run registry check
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-        run: go run scripts/check_registry.go
-      - name: Commit changes if any
-        working-directory: registry
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-        run: |
-          git add .
-          git commit -m 'Automated registry update' || echo "No changes to commit"
-          git push
+          go-version: '1.16'
+      - name: Run your script
+        run: go run main.go
+

@@ -21,7 +21,7 @@ jobs:
       with:
         repository: lvim-tech/clipack-registry
         path: registry
-        token: ${{ secrets.GITHUB_TOKEN }}  # Уверете се, че токенът е предоставен
+        token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}  # Уверете се, че токенът е предоставен
 
     - name: Set up Go
       uses: actions/setup-go@v2
@@ -38,7 +38,7 @@ jobs:
 
     - name: Run registry check
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
       run: go run scripts/check_registry.go
 
     - name: Commit changes if any

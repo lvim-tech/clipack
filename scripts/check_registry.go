@@ -56,7 +56,19 @@ func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, s
 	// Check for the latest release
 	release, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
 	if err != nil {
-		return pkg.Version, pkg.Commit, fmt.Errorf("error getting latest release: %v", err)
+		// If there is no release, fall back to getting the latest tag
+		tags, _, err := client.Repositories.ListTags(context.Background(), owner, repo, nil)
+		if err != nil || len(tags) == 0 {
+			return pkg.Version, pkg.Commit, fmt.Errorf("error getting latest release or tag: %v", err)
+		}
+		newVersion := tags[0].GetName()
+		// Check for the latest commit
+		commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)
+		if err != nil {
+			return pkg.Version, pkg.Commit, fmt.Errorf("error getting commits: %v", err)
+		}
+		newCommit := commits[0].GetSHA()
+		return newVersion, newCommit, nil
 	}
 	newVersion := release.GetTagName()
 

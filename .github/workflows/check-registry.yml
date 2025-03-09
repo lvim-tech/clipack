@@ -1,55 +1,95 @@
 name: Check Registry Updates
+
 on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+
 jobs:
   check-for-updates:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      
     steps:
-      - name: Checkout application repository
-        uses: actions/checkout@v4
-      # Клонирайте registry хранилището
-      - name: Clone registry repository
-        run: |
-          git clone https://oauth2:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/lvim-tech/clipack-registry.git registry
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.23'
-      - name: Install dependencies
-        run: go mod download
-      - name: Configure Git for registry
-        run: |
-          cd registry
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git config --global credential.helper store
-          echo "https://lvim-tech:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
-      # Създаване на нов файл с вградена стойност на токена
-      - name: Create simple token file
-        run: echo '${{ secrets.PERSONAL_ACCESS_TOKEN }}' > token.txt
-      # Създаване на модифицирано копие на скрипта, което чете токена от файл
-      - name: Create modified check_registry.go with file reading
-        run: "cat > modified_check_registry.go << 'EOF'\npackage main\n\nimport (\n    \"context\"\n    \"fmt\"\n    \"io/ioutil\"\n    \"log\"\n    \"os/exec\"\n    \"path/filepath\"\n    \"strings\"\n\n    \"github.com/google/go-github/v41/github\"\n    \"golang.org/x/oauth2\"\n    \"gopkg.in/yaml.v2\"\n)\n\ntype Index struct {\n    Packages []string `yaml:\"packages\"`\n}\n\ntype Package struct {\n    Name        string `yaml:\"name\"`\n    Version     string `yaml:\"version\"`\n    Commit      string `yaml:\"commit\"`\n    Description string `yaml:\"description\"`\n    Homepage    string `yaml:\"homepage\"`\n    License     string `yaml:\"license\"`\n    Maintainer  string `yaml:\"maintainer\"`\n    UpdatedAt   string `yaml:\"updated_at\"`\n    Tags        []string `yaml:\"tags\"`\n    Install     struct {\n        Source struct {\n            Type string `yaml:\"type\"`\n            URL  string `yaml:\"url\"`\n            Ref  string `yaml:\"ref\"`\n        } `yaml:\"source\"`\n        Steps []string `yaml:\"steps\"`\n        Binaries []string `yaml:\"binaries\"`\n        AdditionalConfig []struct {\n            Filename string `yaml:\"filename\"`\n            Content  string `yaml:\"content\"`\n        } `yaml:\"additional-config\"`\n    } `yaml:\"install\"`\n}\n\nfunc checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, string, error) {\n    ownerRepo := strings.TrimPrefix(pkg.Homepage, \"https://github.com/\")\n    ownerRepo = strings.TrimSuffix(ownerRepo, \".git\")\n    parts := strings.Split(ownerRepo, \"/\")\n    if len(parts) != 2 {\n        return pkg.Version, pkg.Commit, fmt.Errorf(\"invalid repository URL: %s\", pkg.Homepage)\n    }\n    owner, repo := parts[0], parts[1]\n\n    // Check for the latest release\n    release, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)\n    if err != nil {\n        // If there is no release, fall back to getting the latest tag\n        tags, _, err := client.Repositories.ListTags(context.Background(), owner, repo, nil)\n        if err != nil || len(tags) == 0 {\n            return pkg.Version, pkg.Commit, fmt.Errorf(\"error getting latest release or tag: %v\", err)\n        }\n        newVersion := tags[0].GetName()\n        // Check for the latest commit\n        commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)\n        if err != nil {\n            return pkg.Version, pkg.Commit, fmt.Errorf(\"error getting commits: %v\", err)\n        }\n        newCommit := commits[0].GetSHA()\n        return newVersion, newCommit, nil\n    }\n    newVersion := release.GetTagName()\n\n    // Check for the latest commit\n    commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)\n    if err != nil {\n        return pkg.Version, pkg.Commit, fmt.Errorf(\"error getting commits: %v\", err)\n    }\n    newCommit := commits[0].GetSHA()\n\n    return newVersion, newCommit, nil\n}\n\nfunc main() {\n    // Четене на токена от файл\n    tokenBytes, err := ioutil.ReadFile(\"token.txt\")\n    if err != nil {\n        log.Fatalf(\"Error reading token file: %v\", err)\n    }\n    token := strings.TrimSpace(string(tokenBytes))\n    if token == \"\" {\n        log.Fatalf(\"Token cannot be empty\")\n    }\n    \n    ctx := context.Background()\n    ts := oauth2.StaticTokenSource(\n        &oauth2.Token{AccessToken: token},\n    )\n    tc := oauth2.NewClient(ctx, ts)\n    client := github.NewClient(tc)\n\n    // Четене на index.yaml\n    indexData, err := ioutil.ReadFile(filepath.Join(\"registry\", \"index.yaml\"))\n    if err != nil {\n        log.Fatalf(\"Error reading index.yaml: %v\", err)\n    }\n\n    var index Index\n    err = yaml.Unmarshal(indexData, &index)\n    if err != nil {\n        log.Fatalf(\"Error unmarshalling index.yaml: %v\", err)\n    }\n\n    updated := false\n\n    for _, file := range index.Packages {\n        filePath := filepath.Join(\"registry\", file)\n        data, err := ioutil.ReadFile(filePath)\n        if err != nil {\n            log.Fatalf(\"Error reading file %s: %v\", filePath, err)\n        }\n\n        var pkg Package\n        err = yaml.Unmarshal(data, &pkg)\n        if err != nil {\n            log.Fatalf(\"Error unmarshalling YAML for file %s: %v\", filePath, err)\n        }\n\n        newVersion, newCommit, err := checkForNewVersionAndCommit(client, &pkg)\n        if err != nil {\n            log.Printf(\"Error checking for new version and commit for %s: %v\", pkg.Name, err)\n            continue\n        }\n\n        if newVersion != pkg.Version || newCommit != pkg.Commit {\n            pkg.Version = newVersion\n            pkg.Commit = newCommit\n            updated = true\n\n            data, err = yaml.Marshal(&pkg)\n            if err != nil {\n                log.Fatalf(\"Error marshalling YAML for file %s: %v\", filePath, err)\n            }\n\n            err = ioutil.WriteFile(filePath, data, 0644)\n            if err != nil {\n                log.Fatalf(\"Error writing file %s: %v\", filePath, err)\n            }\n        }\n    }\n\n    if updated {\n        // Комитване на промените\n        cmd := exec.Command(\"git\", \"add\", \".\")\n        cmd.Dir = \"registry\"\n        err := cmd.Run()\n        if err != nil {\n            log.Fatalf(\"Error adding changes to git: %v\", err)\n        }\n\n        cmd = exec.Command(\"git\", \"commit\", \"-m\", \"Automated registry update\")\n        cmd.Dir = \"registry\"\n        output, err := cmd.CombinedOutput()\n        if err != nil {\n            log.Fatalf(\"Error committing changes to git: %v, output: %s\", err, output)\n        }\n\n        cmd = exec.Command(\"git\", \"push\")\n        cmd.Dir = \"registry\"\n        output, err = cmd.CombinedOutput()\n        if err != nil {\n            log.Fatalf(\"Error pushing changes to git: %v, output: %s\", err, output)\n        }\n    } else {\n        fmt.Println(\"No updates found.\")\n    }\n}\nEOF\n"
-      # Преди изпълнение на скрипта, проверка за съдържание на файла с токена
-      - name: Check token file content
-        run: |
-          TOKEN_LENGTH=$(wc -c < token.txt)
-          echo "Token file size: $TOKEN_LENGTH bytes"
-          if [ "$TOKEN_LENGTH" -lt 5 ]; then
-            echo "Token file seems too small, checking content:"
-            cat token.txt | wc -c
-            echo "Trying direct writing of token again"
-            echo -n '${{ secrets.PERSONAL_ACCESS_TOKEN }}' > token.txt
-            echo "New token file size: $(wc -c < token.txt) bytes"
-          fi
-      # Изпълнение на модифицирания скрипт
-      - name: Run check registry with token from file
-        run: go run modified_check_registry.go
-      # Почистване на токен файла след изпълнение
-      - name: Clean up token file
-        run: rm -f token.txt
+    - name: Checkout application repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Clone registry repository
+      run: |
+        git clone https://oauth2:${{ secrets.CLIPACK }}@github.com/lvim-tech/clipack-registry.git registry
+
+    - name: Configure Git for registry
+      run: |
+        cd registry
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git config credential.helper 'store --file=.git/credentials'
+        echo "https://oauth2:${{ secrets.CLIPACK }}@github.com" > .git/credentials
+        chmod 600 .git/credentials
+
+    - name: Install dependencies
+      run: go mod download
+
+    # Създайте временен файл, който ще модифицира оригиналния скрипт
+    - name: Create token setup script
+      run: |
+        cat > token_setup.go << 'EOF'
+        package main
+
+        import (
+            "fmt"
+            "io/ioutil"
+            "log"
+            "os"
+            "os/exec"
+            "strings"
+        )
+
+        func main() {
+            // 1. Прочитане на оригиналния скрипт
+            scriptBytes, err := ioutil.ReadFile("scripts/check_registry.go")
+            if err != nil {
+                log.Fatalf("Error reading check_registry.go: %v", err)
+            }
+            
+            // 2. Прочитане на токена от argс
+            if len(os.Args) < 2 {
+                log.Fatalf("Please provide token as argument")
+            }
+            
+            token := os.Args[1]
+            
+            // 3. Заместване на проверката за GITHUB_TOKEN с директно задаване
+            originalCode := string(scriptBytes)
+            replacedCode := strings.Replace(
+                originalCode,
+                "token := os.Getenv(\"GITHUB_TOKEN\")\n\tif token == \"\" {\n\t\tlog.Fatalf(\"GITHUB_TOKEN environment variable is required\")\n\t}",
+                fmt.Sprintf("token := \"%s\" // Директно зададен токен", token),
+                1,
+            )
+            
+            // 4. Запазване на модифицирания файл
+            err = ioutil.WriteFile("modified_check_registry.go", []byte(replacedCode), 0644)
+            if err != nil {
+                log.Fatalf("Error writing modified_check_registry.go: %v", err)
+            }
+            
+            // 5. Изпълнение на модифицирания скрипт
+            cmd := exec.Command("go", "run", "modified_check_registry.go")
+            cmd.Stdout = os.Stdout
+            cmd.Stderr = os.Stderr
+            if err := cmd.Run(); err != nil {
+                log.Fatalf("Error running script: %v", err)
+            }
+        }
+        EOF
+
+    # Изпълнение на скрипта за настройка с токена като аргумент
+    - name: Run registry check with token setup
+      run: go run token_setup.go "${{ secrets.CLIPACK }}"

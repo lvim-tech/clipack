@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      
+    
     steps:
     - name: Checkout application repository
       uses: actions/checkout@v4
@@ -35,6 +35,11 @@ jobs:
         git config credential.helper 'store --file=.git/credentials'
         echo "https://oauth2:${{ secrets.CLIPACK }}@github.com" > .git/credentials
         chmod 600 .git/credentials
+
+    - name: Print CLIPACK environment variable
+      env:
+        CLIPACK: ${{ secrets.CLIPACK }}
+      run: echo "CLIPACK=${CLIPACK}"
 
     - name: Run check registry script
       env:

@@ -5,6 +5,9 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write  # Добавяне на write разрешение за съдържание
+
 jobs:
   check-for-updates:
     runs-on: ubuntu-latest
@@ -18,6 +21,7 @@ jobs:
       with:
         repository: lvim-tech/clipack-registry
         path: registry
+        token: ${{ secrets.GITHUB_TOKEN }}  # Уверете се, че токенът е предоставен
 
     - name: Set up Go
       uses: actions/setup-go@v2

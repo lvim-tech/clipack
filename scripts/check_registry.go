@@ -45,11 +45,11 @@ type Package struct {
 }
 
 func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, string, error) {
-	ownerRepo := strings.TrimPrefix(pkg.Install.Source.URL, "https://github.com/")
+	ownerRepo := strings.TrimPrefix(pkg.Homepage, "https://github.com/")
 	ownerRepo = strings.TrimSuffix(ownerRepo, ".git") // премахване на .git
 	parts := strings.Split(ownerRepo, "/")
 	if len(parts) != 2 {
-		return pkg.Version, pkg.Commit, fmt.Errorf("invalid repository URL: %s", pkg.Install.Source.URL)
+		return pkg.Version, pkg.Commit, fmt.Errorf("invalid repository URL: %s", pkg.Homepage)
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -143,16 +143,16 @@ func main() {
 
 		cmd = exec.Command("git", "commit", "-m", "Automated registry update")
 		cmd.Dir = "registry"
-		err = cmd.Run()
+		output, err := cmd.CombinedOutput()
 		if err != nil {
-			log.Fatalf("Error committing changes to git: %v", err)
+			log.Fatalf("Error committing changes to git: %v, output: %s", err, output)
 		}
 
 		cmd = exec.Command("git", "push")
 		cmd.Dir = "registry"
-		err = cmd.Run()
+		output, err = cmd.CombinedOutput()
 		if err != nil {
-			log.Fatalf("Error pushing changes to git: %v", err)
+			log.Fatalf("Error pushing changes to git: %v, output: %s", err, output)
 		}
 	} else {
 		fmt.Println("No updates found.")

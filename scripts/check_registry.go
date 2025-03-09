@@ -96,7 +96,7 @@ func main() {
 
 	updated := false
 
-	for _, file := range index.PPackages {
+	for _, file := range index.Packages {
 		filePath := filepath.Join("registry", file)
 		data, err := ioutil.ReadFile(filePath)
 		if err != nil {
@@ -109,7 +109,7 @@ func main() {
 			log.Fatalf("Error unmarshalling YAML for file %s: %v", filePath, err)
 		}
 
-		newVersion, newCommit, err := checkForNewVersionAndCommit(client, &pkg)
+		newVersion, newCommit, err = checkForNewVersionAndCommit(client, &pkg)
 		if err != nil {
 			log.Printf("Error checking for new version and commit for %s: %v", pkg.Name, err)
 			continue
@@ -143,14 +143,14 @@ func main() {
 
 		cmd = exec.Command("git", "commit", "-m", "Automated registry update")
 		cmd.Dir = "registry"
-		err := cmd.Run()
+		err = cmd.Run()
 		if err != nil {
 			log.Fatalf("Error committing changes to git: %v", err)
 		}
 
 		cmd = exec.Command("git", "push")
 		cmd.Dir = "registry"
-		err := cmd.Run()
+		err = cmd.Run()
 		if err != nil {
 			log.Fatalf("Error pushing changes to git: %v", err)
 		}

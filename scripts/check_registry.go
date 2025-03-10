@@ -13,7 +13,7 @@ import (
 
     "github.com/google/go-github/v41/github"
     "golang.org/x/oauth2"
-    "gopkg.in/yaml.v2"
+    "gopkg.in/yaml.v3"
 )
 
 type Index struct {

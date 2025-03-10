@@ -40,47 +40,47 @@ func EnsureDirectoryExists(path string) error {
 }
 
 func DownloadContent(url string) ([]byte, error) {
-    url = strings.Replace(url, "github.com", "raw.githubusercontent.com", 1)
-    url = strings.Replace(url, "/blob/", "/", 1)
+	url = strings.Replace(url, "github.com", "raw.githubusercontent.com", 1)
+	url = strings.Replace(url, "/blob/", "/", 1)
 
-    resp, err := http.Get(url)
-    if err != nil {
-        return nil, fmt.Errorf("failed to download content: %v", err)
-    }
-    defer resp.Body.Close()
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download content: %v", err)
+	}
+	defer resp.Body.Close()
 
-    if resp.StatusCode != http.StatusOK {
-        return nil, fmt.Errorf("failed to download content: status code %d", resp.StatusCode)
-    }
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download content: status code %d", resp.StatusCode)
+	}
 
-    content, err := io.ReadAll(resp.Body)
-    if err != nil {
-        return nil, fmt.Errorf("failed to read content: %v", err)
-    }
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read content: %v", err)
+	}
 
-    return content, nil
+	return content, nil
 }
 
 func GetCurrentUser() string {
-    currentUser, err := user.Current()
-    if err != nil {
-        return "unknown"
-    }
-    return currentUser.Username
+	currentUser, err := user.Current()
+	if err != nil {
+		return "unknown"
+	}
+	return currentUser.Username
 }
 
 func FormatDateTime(t time.Time) string {
-    return t.UTC().Format("2006-01-02 15:04:05")
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
 
 func GetCurrentDateTime() time.Time {
-    return time.Now().UTC()
+	return time.Now().UTC()
 }
 
 func CompareVersions(currentVersion, newVersion string) bool {
-    return currentVersion != newVersion
+	return currentVersion != newVersion
 }
 
 func IsLatestInstallation(method string) bool {
-    return method == "latest"
+	return method == "latest"
 }

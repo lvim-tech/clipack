@@ -45,19 +45,19 @@ type Script struct {
 
 // Package holds the package data
 type Package struct {
-	Name        string      `yaml:"name"`
-	Version     string      `yaml:"version"`
-	Commit      string      `yaml:"commit"`
-	Description string      `yaml:"description"`
-	Maintainer  string      `yaml:"maintainer"`
-	UpdatedAt   time.Time   `yaml:"updated_at"`
-	Tags        []string    `yaml:"tags"`
-	Category    string      `yaml:"-"`
-	License     string      `yaml:"license"`
-	Homepage    string      `yaml:"homepage"`
-	Install     Install     `yaml:"install"`
-	PostInstall PostInstall `yaml:"post-install,omitempty"`
-	InstallMethod    string          `yaml:"install_method"`
+	Name          string      `yaml:"name"`
+	Version       string      `yaml:"version"`
+	Commit        string      `yaml:"commit"`
+	Description   string      `yaml:"description"`
+	Maintainer    string      `yaml:"maintainer"`
+	UpdatedAt     time.Time   `yaml:"updated_at"`
+	Tags          []string    `yaml:"tags"`
+	Category      string      `yaml:"-"`
+	License       string      `yaml:"license"`
+	Homepage      string      `yaml:"homepage"`
+	Install       Install     `yaml:"install"`
+	PostInstall   PostInstall `yaml:"post-install,omitempty"`
+	InstallMethod string      `yaml:"install_method"`
 }
 
 // LoadAllPackagesFromDir loads all packages from a directory

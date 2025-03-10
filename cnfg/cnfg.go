@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/lvim-tech/clipack/utils"
-	"gopkg.in/yaml.v3"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // ConfigInit holds the initial configuration setup

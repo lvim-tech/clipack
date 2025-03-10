@@ -1,40 +1,32 @@
 name: Check Registry Updates
-
 on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-
 jobs:
   check-for-updates:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
     steps:
-    - name: Checkout application repository
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.23'
-
-    - name: Install dependencies
-      run: go mod download
-
-    - name: Clone registry repository
-      run: |
-        git clone https://oauth2:${{ secrets.CLIPACK }}@github.com/lvim-tech/clipack-registry.git registry
-
-    - name: Configure Git for registry
-      run: |
-        cd registry
-        git config user.name 'github-actions[bot]'
-        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-        git config credential.helper 'store --file=.git/credentials'
-        echo "https://oauth2:${{ secrets.CLIPACK }}@github.com" > .git/credentials
-        chmod 600 .git/credentials
-
-    - name: Run check registry script
-      run: go run scripts/check_registry.go ${{ secrets.CLIPACK }}
+      - name: Checkout application repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      - name: Install dependencies
+        run: go mod download
+      - name: Clone registry repository
+        run: |
+          git clone https://oauth2:${{ secrets.CLIPACK }}@github.com/lvim-tech/clipack-registry.git registry
+      - name: Configure Git for registry
+        run: |
+          cd registry
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config credential.helper 'store --file=.git/credentials'
+          echo "https://oauth2:${{ secrets.CLIPACK }}@github.com" > .git/credentials
+          chmod 600 .git/credentials
+      - name: Run check registry script
+        run: go run scripts/check_registry.go ${{ secrets.CLIPACK }}

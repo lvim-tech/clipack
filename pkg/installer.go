@@ -83,6 +83,7 @@ func (in *Installer) outputf(line string) {
 
 // Paths bundles the destination directories for a package.
 type Paths struct {
+	Base   string
 	Bin    string
 	Config string
 	Build  string
@@ -91,11 +92,96 @@ type Paths struct {
 
 func (in *Installer) pathsFor(name string) Paths {
 	return Paths{
+		Base:   in.Config.Paths.Base,
 		Bin:    in.Config.Paths.Bin,
 		Config: filepath.Join(in.Config.Paths.Configs, name),
 		Build:  filepath.Join(in.Config.Paths.Build, name),
 		Man:    in.Config.Paths.Man,
 	}
+}
+
+// under joins rel onto root and refuses anything that escapes root.
+//
+// Registry files are the input here and the result reaches os.RemoveAll, so
+// "../.." has to be rejected rather than cleaned into something plausible.
+func under(root, rel string) (string, error) {
+	if rel == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("%q must be relative", rel)
+	}
+	abs := filepath.Join(root, rel)
+	inside, err := filepath.Rel(root, abs)
+	if err != nil {
+		return "", err
+	}
+	if inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q points outside %s", rel, root)
+	}
+	if inside == "." {
+		return "", fmt.Errorf("%q is the directory itself", rel)
+	}
+	return abs, nil
+}
+
+// overlaps reports whether either path contains the other, or they are equal.
+func overlaps(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	return strings.HasPrefix(a, b+string(filepath.Separator)) ||
+		strings.HasPrefix(b, a+string(filepath.Separator))
+}
+
+// resolveResource validates one resource declaration and returns the absolute
+// source and destination.
+//
+// Three things are checked, all of which are ways a registry file could turn an
+// uninstall into data loss:
+//
+//   - neither path may escape the directory it is relative to;
+//   - the destination may not touch a directory clipack manages itself, since
+//     removing the resource would then take other packages' binaries, configs
+//     or man pages with it;
+//   - the destination may not BE a top-level directory under base. "lib/kitty"
+//     is one package's tree and removing it is safe; "lib" is shared, and the
+//     first uninstall would empty it for everyone.
+func (in *Installer) resolveResource(res Resource, paths Paths) (string, string, error) {
+	src, err := under(paths.Build, res.Source)
+	if err != nil {
+		return "", "", fmt.Errorf("resource source: %w", err)
+	}
+
+	dst, err := under(paths.Base, res.Target)
+	if err != nil {
+		return "", "", fmt.Errorf("resource target: %w", err)
+	}
+
+	rel, err := filepath.Rel(paths.Base, dst)
+	if err != nil {
+		return "", "", err
+	}
+	if len(strings.Split(rel, string(filepath.Separator))) < 2 {
+		return "", "", fmt.Errorf(
+			"resource target %q is a top-level directory; use a path a single package owns, like %q",
+			res.Target, res.Target+"/"+filepath.Base(res.Source))
+	}
+
+	for name, managed := range map[string]string{
+		"bin":      in.Config.Paths.Bin,
+		"configs":  in.Config.Paths.Configs,
+		"build":    in.Config.Paths.Build,
+		"man":      in.Config.Paths.Man,
+		"registry": in.Config.Paths.Registry,
+	} {
+		if managed != "" && overlaps(dst, managed) {
+			return "", "", fmt.Errorf("resource target %q overlaps the %s directory", res.Target, name)
+		}
+	}
+
+	return src, dst, nil
 }
 
 // ResolveMethod falls back to the configured default install method.
@@ -121,7 +207,7 @@ func (in *Installer) Install(p *Package, method string) error {
 	if err := os.RemoveAll(paths.Build); err != nil {
 		return fmt.Errorf("removing build directory: %w", err)
 	}
-	for _, dir := range []string{paths.Bin, paths.Config, paths.Build, paths.Man} {
+	for _, dir := range []string{paths.Base, paths.Bin, paths.Config, paths.Build, paths.Man} {
 		if err := utils.EnsureDirectoryExists(dir); err != nil {
 			return fmt.Errorf("creating directory %s: %w", dir, err)
 		}
@@ -133,6 +219,7 @@ func (in *Installer) Install(p *Package, method string) error {
 
 	var errs []error
 	errs = append(errs, in.installBinaries(p, paths)...)
+	errs = append(errs, in.installResources(p, paths)...)
 	errs = append(errs, in.installConfigs(p, paths)...)
 	errs = append(errs, in.installMan(p, paths)...)
 	errs = append(errs, in.installAdditionalConfig(p, paths)...)
@@ -198,8 +285,28 @@ func (in *Installer) Remove(p *Package) error {
 	return nil
 }
 
-// removeArtifacts deletes binaries, man pages and post-install scripts.
+// removeArtifacts deletes binaries, resource trees, man pages and post-install
+// scripts — everything the install put outside the package's own config
+// directory, which Remove deletes wholesale.
 func (in *Installer) removeArtifacts(p *Package, paths Paths) {
+	for _, res := range p.Install.Resources {
+		_, dst, err := in.resolveResource(res, paths)
+		if err != nil {
+			// Refusing to delete beats guessing at what a malformed target meant.
+			in.warnf("not removing resource %q: %v", res.Target, err)
+			continue
+		}
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			continue
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			in.warnf("could not remove resources %s: %v", dst, err)
+			continue
+		}
+		in.infof("Removed resources %s", dst)
+		pruneEmptyParents(dst, paths.Base)
+	}
+
 	for _, binPath := range p.Install.Binaries {
 		target := filepath.Join(paths.Bin, filepath.Base(binPath))
 		if err := os.Remove(target); err == nil {
@@ -354,6 +461,57 @@ func (in *Installer) installBinaries(p *Package, paths Paths) []error {
 		in.infof("Installed binary %s", dst)
 	}
 	return errs
+}
+
+func (in *Installer) installResources(p *Package, paths Paths) []error {
+	var errs []error
+	for _, res := range p.Install.Resources {
+		src, dst, err := in.resolveResource(res, paths)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+
+		info, err := os.Stat(src)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("resource %s not found in build output", res.Source))
+			continue
+		}
+		if !info.IsDir() {
+			errs = append(errs, fmt.Errorf("resource %s is not a directory", res.Source))
+			continue
+		}
+
+		// Replace the tree rather than copy over it: files the previous version
+		// shipped and this one dropped are exactly what a merge would keep alive,
+		// and a stale .so or Python module is worse than a missing one.
+		if err := os.RemoveAll(dst); err != nil {
+			errs = append(errs, fmt.Errorf("replacing %s: %w", dst, err))
+			continue
+		}
+		if err := CopyTree(src, dst); err != nil {
+			errs = append(errs, fmt.Errorf("copying resource %s: %w", res.Source, err))
+			continue
+		}
+		in.infof("Installed resources %s", dst)
+	}
+	return errs
+}
+
+// pruneEmptyParents removes the directories between dir and root that the
+// removal just emptied, so uninstalling the only package that used <base>/lib
+// does not leave the directory behind. os.Remove refuses a non-empty directory,
+// which is precisely the stop condition wanted here.
+func pruneEmptyParents(dir, root string) {
+	for {
+		dir = filepath.Dir(dir)
+		if !overlaps(dir, root) || filepath.Clean(dir) == filepath.Clean(root) {
+			return
+		}
+		if os.Remove(dir) != nil {
+			return
+		}
+	}
 }
 
 func (in *Installer) installConfigs(p *Package, paths Paths) []error {

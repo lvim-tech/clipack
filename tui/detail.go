@@ -78,6 +78,15 @@ func renderDetail(entry packageItem, width int, s Styles) string {
 		}
 	}
 
+	// Resources are the one thing an install puts outside bin/, configs/ and man/,
+	// so where they land is worth showing rather than leaving to be discovered.
+	if len(p.Install.Resources) > 0 {
+		b.WriteString("\n" + s.DetailTitle.Render("Resources") + "\n")
+		for _, res := range p.Install.Resources {
+			b.WriteString(s.Muted.Render("  "+s.Icons.Bullet+" ") + res.Target + "\n")
+		}
+	}
+
 	if len(p.Install.AdditionalConfig) > 0 {
 		b.WriteString("\n" + s.DetailTitle.Render("Config files") + "\n")
 		for _, ac := range p.Install.AdditionalConfig {

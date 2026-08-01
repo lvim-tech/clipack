@@ -182,3 +182,67 @@ func TestRenderStatus(t *testing.T) {
 		}
 	})
 }
+
+func TestDetailShowsResourceTargets(t *testing.T) {
+	p := &pkg.Package{
+		Name: "kitty",
+		Install: pkg.Install{
+			Binaries: []string{"linux-package/bin/kitty"},
+			Resources: []pkg.Resource{
+				{Source: "linux-package/lib/kitty", Target: "lib/kitty"},
+			},
+		},
+	}
+
+	out := renderDetail(packageItem{pkg: p}, 60, DefaultStyles())
+	// The target is what the user needs, not the path inside the build tree.
+	for _, want := range []string{"Resources", "lib/kitty"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the detail pane is missing %q", want)
+		}
+	}
+}
+
+func TestDetailOmitsResourcesWhenThereAreNone(t *testing.T) {
+	p := &pkg.Package{Name: "bat", Install: pkg.Install{Binaries: []string{"target/release/bat"}}}
+
+	if out := renderDetail(packageItem{pkg: p}, 60, DefaultStyles()); strings.Contains(out, "Resources") {
+		t.Error("a package with no resources still got a Resources heading")
+	}
+}
+
+func TestResourceClause(t *testing.T) {
+	withRes := func(targets ...string) *pkg.Package {
+		p := &pkg.Package{}
+		for _, t := range targets {
+			p.Install.Resources = append(p.Install.Resources, pkg.Resource{Target: t})
+		}
+		return p
+	}
+
+	tests := []struct {
+		name  string
+		packs []*pkg.Package
+		want  string
+	}{
+		{"none", []*pkg.Package{withRes()}, ""},
+		{"nil package", []*pkg.Package{nil}, ""},
+		{"one", []*pkg.Package{withRes("lib/kitty")}, " and lib/kitty"},
+		{"sorted", []*pkg.Package{withRes("share/ghostty", "lib/kitty")}, " and lib/kitty, share/ghostty"},
+		{
+			// Update reads one manifest and writes another; a tree the installed
+			// version owns is removed even when the new version dropped it.
+			"deduplicated across packages",
+			[]*pkg.Package{withRes("lib/kitty"), withRes("lib/kitty", "share/x")},
+			" and lib/kitty, share/x",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resourceClause(tt.packs...); got != tt.want {
+				t.Errorf("resourceClause() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

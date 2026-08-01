@@ -16,6 +16,7 @@ package pkg
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,9 +45,29 @@ type Install struct {
 	Environment      map[string]string  `yaml:"environment,omitempty"`
 	Steps            []string           `yaml:"steps,omitempty"`
 	Binaries         []string           `yaml:"binaries,omitempty"`
+	Resources        []Resource         `yaml:"resources,omitempty"`
 	Configs          []string           `yaml:"configs,omitempty"`
 	Man              []string           `yaml:"man,omitempty"`
 	AdditionalConfig []AdditionalConfig `yaml:"additional-config,omitempty"`
+}
+
+// Resource is a directory tree a package needs installed alongside its
+// binaries, and which uninstalling therefore has to remove.
+//
+// Not every program is a self-contained executable. kitty's launcher is
+// compiled with KITTY_LIB_PATH="../lib/kitty" and loads its Python package from
+// there; ghostty looks for its terminfo and shell integration in
+// "../share/ghostty". Both resolve that against their own location, so with
+// binaries in <base>/bin the trees have to land in <base>/lib and <base>/share.
+//
+// Declaring them here rather than copying them from an install step is what
+// makes them removable: they go into the manifest, so Remove knows what to
+// delete even after the registry entry has moved on.
+type Resource struct {
+	// Source is the directory in the build output, relative to the build dir.
+	Source string `yaml:"source"`
+	// Target is where it is installed, relative to the base directory.
+	Target string `yaml:"target"`
 }
 
 // AdditionalConfig holds additional configuration data.
@@ -210,6 +231,54 @@ func CopyFile(src, dst string) error {
 	}
 
 	return destination.Close()
+}
+
+// CopyTree recursively copies the directory src to dst.
+//
+// Symlinks are recreated as symlinks rather than followed: kitty's package tree
+// contains them, and dereferencing turns one link into a full second copy — or
+// into an error, when the link is relative and points outside the tree.
+func CopyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, info.Mode().Perm())
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			// A stale link from an earlier install would make Symlink fail.
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return os.Symlink(link, target)
+		case info.Mode().IsRegular():
+			return CopyFile(path, target)
+		default:
+			// Sockets, devices and pipes have no business in a build output;
+			// skipping beats failing the whole install over one of them.
+			return nil
+		}
+	})
 }
 
 // LoadInstalledPackages loads installed packages from the config directory.

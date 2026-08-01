@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -581,5 +582,326 @@ func TestStepsInheritTheParentEnvironment(t *testing.T) {
 	output := rec.texts(EventOutput)
 	if len(output) != 1 || output[0] != "from-the-shell" {
 		t.Errorf("output = %v, want the inherited value", output)
+	}
+}
+
+// resourcePackage builds a tree in the build output and installs it under
+// lib/demo, the way kitty needs its Python package next to the launcher.
+func resourcePackage() *Package {
+	p := buildablePackage()
+	p.Install.Steps = append(p.Install.Steps,
+		"mkdir -p out/lib/demo/inner",
+		`printf 'shared library' > out/lib/demo/core.so`,
+		`printf 'nested' > out/lib/demo/inner/mod.py`,
+		"ln -s core.so out/lib/demo/link.so",
+	)
+	p.Install.Resources = []Resource{{Source: "out/lib/demo", Target: "lib/demo"}}
+	return p
+}
+
+func TestInstallResourcesCopiesTheTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	rec := &recorder{}
+	in := NewInstaller(config, rec.report)
+
+	if err := in.Install(resourcePackage(), MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	root := filepath.Join(config.Paths.Base, "lib", "demo")
+	for _, want := range []string{
+		filepath.Join(root, "core.so"),
+		filepath.Join(root, "inner", "mod.py"),
+	} {
+		if !exists(want) {
+			t.Errorf("missing after install: %s", want)
+		}
+	}
+
+	// Symlinks are recreated, not dereferenced into a second copy.
+	info, err := os.Lstat(filepath.Join(root, "link.so"))
+	if err != nil {
+		t.Fatalf("the symlink was not installed: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("the symlink was installed as a regular file")
+	}
+}
+
+func TestRemoveDeletesResourcesAndEmptyParents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	p := resourcePackage()
+	if err := in.Install(p, MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	// Remove works from the manifest, which is what a real uninstall reads.
+	installed, err := InstalledMap(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Remove(installed["demo"]); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	if exists(filepath.Join(config.Paths.Base, "lib", "demo")) {
+		t.Error("the resource tree survived the uninstall")
+	}
+	// lib/ only existed for this package, so it goes too.
+	if exists(filepath.Join(config.Paths.Base, "lib")) {
+		t.Error("the emptied parent directory was left behind")
+	}
+	// Pruning must stop at the base directory.
+	if !exists(config.Paths.Base) {
+		t.Fatal("pruning walked past the base directory")
+	}
+}
+
+func TestRemoveKeepsParentSharedWithAnotherPackage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	if err := in.Install(resourcePackage(), MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	// A second package's tree under the same parent.
+	other := filepath.Join(config.Paths.Base, "lib", "other")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	installed, _ := InstalledMap(config)
+	if err := in.Remove(installed["demo"]); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	if !exists(other) {
+		t.Error("uninstalling one package removed another package's resources")
+	}
+}
+
+func TestUpdateReplacesResourcesRatherThanMerging(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	if err := in.Install(resourcePackage(), MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	stale := filepath.Join(config.Paths.Base, "lib", "demo", "core.so")
+	if !exists(stale) {
+		t.Fatal("the first install did not produce the file under test")
+	}
+
+	// The new version drops core.so and ships a different file.
+	next := resourcePackage()
+	next.Version = "v2.0.0"
+	next.Install.Steps = []string{
+		"mkdir -p out man/man1 out/lib/demo",
+		`printf '#!/bin/sh\necho demo\n' > out/demo`,
+		`printf 'the man page' > man/man1/demo.1`,
+		`printf 'built config' > out/demo.conf`,
+		`printf 'replacement' > out/lib/demo/core2.so`,
+	}
+	if err := in.Update(next, MethodVersion); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	if exists(stale) {
+		t.Error("a file the new version no longer ships survived the update")
+	}
+	if !exists(filepath.Join(config.Paths.Base, "lib", "demo", "core2.so")) {
+		t.Error("the new resource tree was not installed")
+	}
+}
+
+func TestResolveResourceRejectsDangerousTargets(t *testing.T) {
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+	paths := in.pathsFor("demo")
+
+	tests := []struct {
+		name string
+		res  Resource
+	}{
+		{"escaping target", Resource{Source: "out", Target: "../../etc"}},
+		{"absolute target", Resource{Source: "out", Target: "/etc"}},
+		{"escaping source", Resource{Source: "../../etc", Target: "lib/demo"}},
+		{"absolute source", Resource{Source: "/etc", Target: "lib/demo"}},
+		{"empty target", Resource{Source: "out", Target: ""}},
+		{"empty source", Resource{Source: "", Target: "lib/demo"}},
+		{"base itself", Resource{Source: "out", Target: "."}},
+		{"top-level directory", Resource{Source: "out", Target: "lib"}},
+		{"the bin directory", Resource{Source: "out", Target: "bin/demo"}},
+		{"the configs directory", Resource{Source: "out", Target: "configs/demo"}},
+		{"the man directory", Resource{Source: "out", Target: "man/man1"}},
+		{"the registry directory", Resource{Source: "out", Target: "registry/x"}},
+		{"a path that cleans into bin", Resource{Source: "out", Target: "lib/../bin/demo"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, err := in.resolveResource(tt.res, paths); err == nil {
+				t.Errorf("resolveResource(%+v) accepted a target it must refuse", tt.res)
+			}
+		})
+	}
+}
+
+func TestResolveResourceAcceptsAPackageOwnedTree(t *testing.T) {
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+	paths := in.pathsFor("demo")
+
+	src, dst, err := in.resolveResource(Resource{Source: "out/lib/demo", Target: "lib/demo"}, paths)
+	if err != nil {
+		t.Fatalf("resolveResource() error = %v", err)
+	}
+	if want := filepath.Join(paths.Build, "out/lib/demo"); src != want {
+		t.Errorf("source = %q, want %q", src, want)
+	}
+	if want := filepath.Join(config.Paths.Base, "lib/demo"); dst != want {
+		t.Errorf("target = %q, want %q", dst, want)
+	}
+}
+
+func TestInstallReportsAnUnusableResourceInsteadOfSkippingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	p := buildablePackage()
+	p.Install.Resources = []Resource{{Source: "out/nonexistent", Target: "lib/demo"}}
+
+	if err := in.Install(p, MethodVersion); err == nil {
+		t.Error("Install() succeeded despite a resource missing from the build output")
+	}
+}
+
+// TestInstalledBinaryFindsItsResourcesRelatively is the case the feature exists
+// for: kitty's launcher and ghostty both resolve their resource directory
+// against their OWN location, not the working directory. With binaries in
+// <base>/bin, "../lib/<name>" has to be the tree that was installed.
+func TestInstalledBinaryFindsItsResourcesRelatively(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	p := &Package{
+		Name:    "demo",
+		Version: "v1.0.0",
+		Install: Install{
+			Steps: []string{
+				"mkdir -p out/lib/demo",
+				`printf 'the payload' > out/lib/demo/data.txt`,
+				// Resolves its own directory the way a real launcher does.
+				`printf '#!/bin/sh\ncat "$(dirname "$0")/../lib/demo/data.txt"\n' > out/demo`,
+			},
+			Binaries:  []string{"out/demo"},
+			Resources: []Resource{{Source: "out/lib/demo", Target: "lib/demo"}},
+		},
+	}
+
+	if err := in.Install(p, MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	out, err := exec.Command(filepath.Join(config.Paths.Bin, "demo")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the installed binary could not find its resources: %v (%s)", err, out)
+	}
+	if got := string(out); got != "the payload" {
+		t.Errorf("binary output = %q, want %q", got, "the payload")
+	}
+
+	installed, err := InstalledMap(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Remove(installed["demo"]); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	for _, gone := range []string{
+		filepath.Join(config.Paths.Bin, "demo"),
+		filepath.Join(config.Paths.Base, "lib", "demo"),
+		filepath.Join(config.Paths.Base, "lib"),
+		filepath.Join(config.Paths.Configs, "demo"),
+	} {
+		if exists(gone) {
+			t.Errorf("survived the uninstall: %s", gone)
+		}
+	}
+}
+
+func TestInstallRejectsAResourceThatIsNotADirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	p := buildablePackage()
+	// out/demo is the binary, a regular file.
+	p.Install.Resources = []Resource{{Source: "out/demo", Target: "lib/demo"}}
+
+	if err := in.Install(p, MethodVersion); err == nil {
+		t.Error("Install() accepted a file where a directory tree was declared")
+	}
+}
+
+func TestRemoveRefusesAnInvalidResourceTargetInsteadOfDeleting(t *testing.T) {
+	config := testConfig(t)
+	rec := &recorder{}
+	in := NewInstaller(config, rec.report)
+
+	// A manifest is just a file on disk; this is what one that escapes the base
+	// directory has to do, and quietly obeying it would delete the bin directory.
+	p := &Package{
+		Name: "demo",
+		Install: Install{
+			Resources: []Resource{{Source: "out", Target: "bin/../../elsewhere"}},
+		},
+	}
+
+	in.removeArtifacts(p, in.pathsFor("demo"))
+
+	var warned bool
+	for _, text := range rec.texts(EventWarn) {
+		if strings.Contains(text, "not removing resource") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Error("an out-of-bounds resource target was not reported")
+	}
+	if !exists(config.Paths.Bin) {
+		t.Fatal("the bin directory was deleted by a malformed resource target")
 	}
 }

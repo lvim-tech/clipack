@@ -53,8 +53,8 @@ be browsed, filtered and installed.`,
 			}
 
 			// Installing over an existing install would leave the previous
-			// version's binaries and man pages behind: only update knows what
-			// they were, because it reads the manifest first.
+			// version's binaries, resource trees and man pages behind: only
+			// update knows what they were, because it reads the manifest first.
 			if installed[name] != nil {
 				return fmt.Errorf("%s is already installed: use 'clipack update %s', or 'clipack remove %s' first", name, name, name)
 			}

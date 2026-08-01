@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -304,12 +305,13 @@ func (m Model) viewConfirm() string {
 			s.Muted.Render("installed  ")+entry.installed.Ref(method),
 			s.Muted.Render("available  ")+entry.pkg.Ref(method),
 			"",
-			s.Muted.Render("Binaries, configs and man pages are replaced."),
+			wrap.Render(s.Muted.Render("Binaries, configs, man pages"+
+				resourceClause(entry.pkg, entry.installed)+" are replaced.")),
 		)
 	case actionRemove:
 		lines = append(lines,
-			s.Muted.Render("Removes binaries, man pages and the config"),
-			s.Muted.Render("directory for this package."),
+			wrap.Render(s.Muted.Render("Removes binaries, man pages"+
+				resourceClause(entry.installed)+" and the config directory for this package.")),
 		)
 	case actionSwitchMethod:
 		from := installedMethod(entry, m.method)
@@ -432,4 +434,33 @@ func (m Model) viewRun() string {
 		s.Pane.Width(m.logView.Width+2).Height(m.logView.Height).Render(m.logView.View()),
 		clip.Render(hint),
 	)
+}
+
+// resourceClause names the directories an install put outside bin/, configs/
+// and man/, so the confirmation says what it will actually touch instead of
+// listing three categories and quietly meaning four.
+//
+// It takes several packages because update reads one manifest and writes
+// another: a tree the installed version owns still gets removed even when the
+// incoming version has dropped it.
+func resourceClause(packages ...*pkg.Package) string {
+	var targets []string
+	seen := map[string]bool{}
+	for _, p := range packages {
+		if p == nil {
+			continue
+		}
+		for _, res := range p.Install.Resources {
+			if seen[res.Target] {
+				continue
+			}
+			seen[res.Target] = true
+			targets = append(targets, res.Target)
+		}
+	}
+	if len(targets) == 0 {
+		return ""
+	}
+	sort.Strings(targets)
+	return " and " + strings.Join(targets, ", ")
 }

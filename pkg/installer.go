@@ -26,6 +26,10 @@ const (
 	EventOutput
 	EventWarn
 	EventError
+	// EventHint carries an explanation of a failure and what to do about it.
+	// Separate from EventWarn so the interfaces can put it where a user will
+	// actually read it, rather than in the middle of the build log.
+	EventHint
 	EventDone
 )
 
@@ -53,6 +57,9 @@ type Installer struct {
 	Report Reporter
 
 	mu sync.Mutex
+	// tail holds the most recent output of the step being run, so a failure
+	// can be explained without keeping the whole log.
+	tail *outputTail
 }
 
 // NewInstaller builds an Installer, defaulting to a no-op reporter.
@@ -79,6 +86,36 @@ func (in *Installer) warnf(format string, args ...any) {
 
 func (in *Installer) outputf(line string) {
 	in.emit(Event{Kind: EventOutput, Text: line})
+}
+
+// record keeps a line for the failure explanation. Guarded by the same lock as
+// reporting: both output pipes are drained concurrently.
+func (in *Installer) record(line string) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.tail != nil {
+		in.tail.add(line)
+	}
+}
+
+// explain reports what the captured output says about a failure. Nothing is
+// emitted when the output is not recognised — a guess dressed up as advice is
+// worse than the raw error, which the user has already seen.
+func (in *Installer) explain() {
+	in.mu.Lock()
+	var lines []string
+	if in.tail != nil {
+		lines = in.tail.all()
+	}
+	in.mu.Unlock()
+
+	for _, d := range Diagnose(lines) {
+		text := d.Cause
+		if d.Fix != "" {
+			text += "\n" + d.Fix
+		}
+		in.emit(Event{Kind: EventHint, Text: text})
+	}
 }
 
 // Paths bundles the destination directories for a package.
@@ -346,12 +383,25 @@ func (in *Installer) runSteps(p *Package, method, buildDir string) error {
 
 	for i, step := range steps {
 		in.emit(Event{Kind: EventStep, Package: p.Name, Step: i + 1, Total: total, Text: step})
+		// Reset per step: the failure is explained from the output of the step
+		// that failed, not from whatever a successful earlier step printed.
+		in.mu.Lock()
+		in.tail = newOutputTail(diagnosticTailLines)
+		in.mu.Unlock()
+
 		if err := in.runCommand(step, buildDir, p.Install.Environment); err != nil {
+			in.explain()
 			return fmt.Errorf("step %d/%d %q failed: %w", i+1, total, step, err)
 		}
 	}
 	return nil
 }
+
+// diagnosticTailLines is how much of a step's output is kept for diagnosis.
+// Compilers repeat themselves — a Rust workspace prints its toolchain
+// requirement once per crate — so the window has to outlast that repetition
+// while staying far below the size of a full build log.
+const diagnosticTailLines = 400
 
 // expandSteps rewrites the "git clone" step so the requested version or commit
 // is actually checked out. The previous code only did this on install, never on
@@ -430,7 +480,9 @@ func (in *Installer) runCommand(step, dir string, env map[string]string) error {
 		scanner := bufio.NewScanner(r)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			in.outputf(scanner.Text())
+			line := scanner.Text()
+			in.record(line)
+			in.outputf(line)
 		}
 	}
 	wg.Add(2)

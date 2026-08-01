@@ -1375,6 +1375,15 @@ func formatEvent(e pkg.Event, s Styles) string {
 		return s.Warn.Render(icons.Warn + " " + e.Text)
 	case pkg.EventError:
 		return s.Err.Render(icons.Error + " " + e.Text)
+	case pkg.EventHint:
+		// The cause is highlighted and the suggested fix is not, so the eye
+		// lands on what broke before what to type.
+		lines := strings.Split(e.Text, "\n")
+		out := s.Warn.Render(icons.Warn + " " + lines[0])
+		for _, line := range lines[1:] {
+			out += "\n" + s.Muted.Render("  "+line)
+		}
+		return out
 	case pkg.EventDone:
 		return s.OK.Render(icons.Done + " " + e.Text)
 	default:

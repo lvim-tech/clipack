@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
@@ -68,6 +69,16 @@ func cliReporter(e pkg.Event) {
 		fmt.Fprintln(os.Stderr, "! "+e.Text)
 	case pkg.EventError:
 		fmt.Fprintln(os.Stderr, "✗ "+e.Text)
+	case pkg.EventHint:
+		// Indented under a marker of its own so it reads as guidance rather
+		// than as one more line of the build log it follows.
+		for i, line := range strings.Split(e.Text, "\n") {
+			marker := "→ "
+			if i > 0 {
+				marker = "  "
+			}
+			fmt.Fprintln(os.Stderr, marker+line)
+		}
 	case pkg.EventDone:
 		fmt.Println("✓ " + e.Text)
 	default:

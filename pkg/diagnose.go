@@ -82,11 +82,18 @@ var matchers = []matcher{
 		},
 	},
 	{
-		re: regexp.MustCompile(`Package '([^']+)', required by [^,]+, not found|No package '([^']+)' found`),
+		// pkg-config reports the same failure in three different wordings
+		// depending on who invoked it; kitty's setup.py produces the third.
+		re: regexp.MustCompile(`Package '([^']+)', required by [^,]+, not found` +
+			`|No package '([^']+)' found` +
+			`|Package '([^']+)' not found`),
 		diagnose: func(m []string) Diagnosis {
 			name := m[1]
-			if name == "" {
-				name = m[2]
+			for _, alt := range m[2:] {
+				if name != "" {
+					break
+				}
+				name = alt
 			}
 			return Diagnosis{
 				Cause: fmt.Sprintf("the build needs the %s development files, which pkg-config cannot find", name),

@@ -303,3 +303,21 @@ func TestHintComesFromTheStepThatFailed(t *testing.T) {
 		t.Errorf("hints = %q, want nothing from the step that succeeded", hints)
 	}
 }
+
+// The third pkg-config wording, from kitty's setup.py. Missed by the first
+// version of this matcher on a real install.
+func TestDiagnosePkgConfigThirdWording(t *testing.T) {
+	out := []string{
+		"Package libxxhash was not found in the pkg-config search path.",
+		"Perhaps you should add the directory containing `libxxhash.pc'",
+		"to the PKG_CONFIG_PATH environment variable",
+		"Package 'libxxhash' not found",
+	}
+	got := Diagnose(out)
+	if len(got) == 0 {
+		t.Fatal("the kitty/setup.py pkg-config wording was not recognised")
+	}
+	if !strings.Contains(got[0].Cause, "libxxhash") {
+		t.Errorf("cause = %q, want it to name libxxhash", got[0].Cause)
+	}
+}

@@ -398,11 +398,39 @@ install:
 | `install.source.url` | Preferred source of the clone URL. |
 | `install.steps` | Shell commands, run in order inside the build directory. |
 | `install.binaries` | Paths, relative to the build directory, copied into `bin/`. |
+| `install.resources` | Directory trees a program needs beside its binary, as `source` (relative to the build directory) and `target` (relative to `base`). Recorded in the manifest, so uninstalling removes them. See below. |
 | `install.configs` | Files copied from the build tree into `configs/<name>/`. |
 | `install.man` | Man pages; the extension picks the section (`.1` → `man1/`). |
 | `install.additional-config` | Files written into `configs/<name>/`. A value starting with `http://` or `https://` is downloaded; anything else is used literally. `.sh` files are made executable. |
 | `install.environment` | Extra environment variables for the build. |
 | `post-install.scripts` | Scripts written into `bin/` and made executable. |
+
+**Resources**
+
+Not every program is a single self-contained executable. kitty's launcher is
+compiled with `KITTY_LIB_PATH="../lib/kitty"` and loads its Python package from
+there; ghostty looks for its terminfo and shell integration in
+`../share/ghostty`. Both resolve that path against the location of the binary,
+so with binaries in `bin/` the trees have to land in `lib/` and `share/`:
+
+```yaml
+    binaries:
+        - linux-package/bin/kitty
+    resources:
+        - source: linux-package/lib/kitty
+          target: lib/kitty
+```
+
+Declaring them here rather than copying them from an install step is what makes
+them removable — they go into the manifest, so `remove` deletes them and prunes
+the directories that emptied. An update replaces the tree instead of merging
+into it, so a file the previous version shipped cannot outlive it.
+
+`target` is validated before anything is written or deleted. It has to stay
+inside `base`, may not touch `bin/`, `configs/`, `build/`, `man/` or
+`registry/`, and may not be a top-level directory: `lib/kitty` belongs to one
+package and removing it is safe, whereas `lib` is shared and the first uninstall
+would empty it for everyone.
 
 **How steps run**
 

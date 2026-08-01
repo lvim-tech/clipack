@@ -2,120 +2,94 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
-	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/spf13/cobra"
 )
 
-var forceRefreshInList bool
+var (
+	listForceRefresh bool
+	listInstalled    bool
+	listUpdates      bool
+)
 
+// listCmd prints the registry as a table. The output is one line per package so
+// it stays greppable; use "clipack preview <name>" for the full record.
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available packages",
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := cnfg.CreateDefaultConfig(); err != nil {
-			log.Fatalf("Error creating config file: %v", err)
-		}
-
-		config, err := cnfg.LoadConfig()
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := loadConfig()
 		if err != nil {
-			log.Fatalf("Error loading config: %v", err)
+			return err
 		}
 
-		var packages []*pkg.Package
-		if forceRefreshInList {
-			fmt.Println("Forcing refresh of the registry cache...")
-
-			cachePath := pkg.GetCacheFilePath(config)
-			os.Remove(cachePath)
-			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
-			os.Remove(timestampPath)
-
-			packages, err = pkg.LoadAllPackagesFromRegistry(config)
-			if err != nil {
-				log.Fatalf("Error loading packages: %v", err)
-			}
-
-			if err := pkg.SaveToCache(packages, config); err != nil {
-				log.Printf("Warning: could not cache packages: %v", err)
-			} else {
-				fmt.Println("Packages saved to cache successfully.")
-			}
-		} else {
-			cachePath := pkg.GetCacheFilePath(config)
-			if _, err := os.Stat(cachePath); os.IsNotExist(err) {
-				fmt.Println("Cache not found. Fetching packages from registry...")
-				packages, err = pkg.LoadAllPackagesFromRegistry(config)
-				if err != nil {
-					log.Fatalf("Error loading packages: %v", err)
-				}
-
-				if err := pkg.SaveToCache(packages, config); err != nil {
-					log.Printf("Warning: could not cache packages: %v", err)
-				}
-			} else {
-				packages, err = pkg.LoadFromCache(config)
-				if err != nil {
-					log.Fatalf("Error loading packages from cache: %v", err)
-				}
-			}
-		}
-
-		if len(packages) == 0 {
-			log.Fatalf("No packages found in registry")
-		}
-
-		installedPackages, err := pkg.LoadInstalledPackages(config)
+		packages, err := loadPackages(config, listForceRefresh)
 		if err != nil {
-			log.Fatalf("Error loading installed packages: %v", err)
+			return err
 		}
 
-		installedMap := make(map[string]*pkg.Package)
-		for _, ip := range installedPackages {
-			installedMap[ip.Name] = ip
+		installedMap, err := pkg.InstalledMap(config)
+		if err != nil {
+			return err
 		}
 
-		fmt.Println("\nAvailable packages:")
-		fmt.Println("------------------")
+		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tCATEGORY\tDESCRIPTION")
+
+		shown := 0
 		for _, p := range packages {
-			tags := strings.Join(p.Tags, ", ")
-			if tags == "" {
-				tags = "-"
+			installed := installedMap[p.Name]
+
+			status := "-"
+			switch {
+			case installed != nil && pkg.HasUpdate(p, installed):
+				status = "update"
+			case installed != nil:
+				status = "installed"
 			}
 
-			fmt.Printf("\nName: %s\n", p.Name)
-			fmt.Printf("Registry Version: %s\n", p.Version)
-			fmt.Printf("Registry Commit: %s\n", p.Commit)
-			fmt.Printf("Description: %s\n", p.Description)
-			fmt.Printf("Maintainer: %s\n", p.Maintainer)
-			if p.License != "" {
-				fmt.Printf("License: %s\n", p.License)
+			if listInstalled && installed == nil {
+				continue
 			}
-			if p.Homepage != "" {
-				fmt.Printf("Homepage: %s\n", p.Homepage)
+			if listUpdates && status != "update" {
+				continue
 			}
-			fmt.Printf("Tags: %s\n", tags)
-			fmt.Printf("Updated: %s\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
-			if ip, ok := installedMap[p.Name]; ok {
-				fmt.Printf("Install Method: %s\n", ip.InstallMethod)
-				if ip.InstallMethod == "commit" {
-					fmt.Printf("Installed Commit: %s\n", ip.Commit)
-				} else {
-					fmt.Printf("Installed Version: %s\n", ip.Version)
-				}
-			} else {
-				fmt.Printf("Install Method: Not installed\n")
+
+			category := p.Category
+			if category == "" {
+				category = "-"
 			}
+
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				p.Name, p.Version, status, category, firstLine(p.Description))
+			shown++
 		}
+
+		if err := w.Flush(); err != nil {
+			return err
+		}
+
+		fmt.Printf("\n%d of %d package(s)\n", shown, len(packages))
+		return nil
 	},
 }
 
+// firstLine trims a description to its first line for table output.
+func firstLine(s string) string {
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		return s[:idx]
+	}
+	return s
+}
+
 func init() {
-	listCmd.Flags().BoolVarP(&forceRefreshInList, "force-refresh", "f", false, "Force refresh of the registry cache")
+	listCmd.Flags().BoolVarP(&listForceRefresh, "force-refresh", "f", false, "Force refresh of the registry cache")
+	listCmd.Flags().BoolVarP(&listInstalled, "installed", "i", false, "Only show installed packages")
+	listCmd.Flags().BoolVarP(&listUpdates, "updates", "u", false, "Only show packages with updates")
 	rootCmd.AddCommand(listCmd)
 }

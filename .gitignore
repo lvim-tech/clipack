@@ -1,0 +1,14 @@
+# Build artifacts
+/clipack
+/main
+/bin/
+dist/
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Editors / OS
+.DS_Store
+*.swp

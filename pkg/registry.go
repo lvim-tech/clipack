@@ -1,226 +1,394 @@
 package pkg
 
 import (
-	"encoding/json"
+	"archive/tar"
+	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lvim-tech/clipack/cnfg"
-	"github.com/lvim-tech/clipack/utils"
 	"gopkg.in/yaml.v3"
 )
 
-// GitHubContent represents the structure of a file on GitHub
-type GitHubContent struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Sha         string `json:"sha"`
-	Size        int    `json:"size"`
-	URL         string `json:"url"`
-	DownloadURL string `json:"download_url"`
-	Type        string `json:"type"`
-	Content     string `json:"content"`
-	Message     string `json:"message"`
-}
+// maxParallelFetches bounds concurrent HTTP requests in the per-file fallback.
+const maxParallelFetches = 8
 
-// IndexFile represents the index file structure
+// maxTarballBytes guards against a hostile or corrupt archive.
+const maxTarballBytes = 64 << 20 // 64 MiB
+
+// Hosts the registry is read from. They are variables rather than constants so
+// tests can point them at a local server; nothing else reassigns them.
+var (
+	rawBaseURL      = "https://raw.githubusercontent.com"
+	codeloadBaseURL = "https://codeload.github.com"
+)
+
+// IndexFile represents the index file structure.
 type IndexFile struct {
 	Packages []string `yaml:"packages"`
 }
 
-// newHTTPClient creates a new HTTP client with default settings
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			DisableCompression:  false,
-			DisableKeepAlives:   false,
-			MaxIdleConnsPerHost: 10,
-		},
-	}
+var (
+	httpClientOnce sync.Once
+	httpClient     *http.Client
+)
+
+// sharedHTTPClient returns a process-wide client so connections are reused
+// across the many requests a registry sync makes.
+func sharedHTTPClient() *http.Client {
+	httpClientOnce.Do(func() {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.MaxIdleConns = 32
+		transport.MaxIdleConnsPerHost = maxParallelFetches
+		transport.IdleConnTimeout = 60 * time.Second
+		httpClient = &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		}
+	})
+	return httpClient
 }
 
-// fetchGitHubFile fetches a file from GitHub
-func fetchGitHubFile(path string, config *cnfg.Config) (string, error) {
-	client := newHTTPClient()
-
-	url := config.Registry.RegistryRepoURL + path
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("error creating request: %v", err)
-	}
-
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "Clipack-Package-Manager")
-
-	// Add token only if configured
-	if config.Registry.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+config.Registry.Token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("error fetching file: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("error fetching file: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	var content GitHubContent
-	if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
-		return "", fmt.Errorf("error decoding response: %v", err)
-	}
-
-	if content.DownloadURL == "" {
-		return "", fmt.Errorf("no download URL available for %s", path)
-	}
-
-	req, err = http.NewRequest("GET", content.DownloadURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("error creating raw content request: %v", err)
-	}
-
-	req.Header.Set("User-Agent", "Clipack-Package-Manager")
-	// Add token only if configured
-	if config.Registry.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+config.Registry.Token)
-	}
-
-	resp, err = client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("error fetching raw content: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("error fetching raw content: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	rawContent, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("error reading raw content: %v", err)
-	}
-
-	return string(rawContent), nil
+// repoRef identifies a GitHub repository and branch.
+type repoRef struct {
+	Owner  string
+	Repo   string
+	Branch string
 }
 
-// LoadAllPackagesFromRegistry loads all packages from the registry
-func LoadAllPackagesFromRegistry(config *cnfg.Config) ([]*Package, error) {
-	if err := utils.EnsureDirectoryExists(config.Paths.Registry); err != nil {
-		return nil, fmt.Errorf("error creating registry directory: %v", err)
+// resolveRepo derives owner/repo/branch from the configured registry URLs.
+func resolveRepo(config *cnfg.Config) (repoRef, error) {
+	branch := config.Registry.Branch
+	if branch == "" {
+		branch = "main"
 	}
 
-	packages, err := LoadFromCache(config)
-	if err == nil {
-		return packages, nil
-	}
-
-	indexContent, err := fetchGitHubFile("/index.yaml", config)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching index: %v", err)
-	}
-
-	var index IndexFile
-	if err := yaml.Unmarshal([]byte(indexContent), &index); err != nil {
-		return nil, fmt.Errorf("error parsing index.yaml: %v\n Content: %s", err, indexContent)
-	}
-
-	if index.Packages == nil || len(index.Packages) == 0 {
-		return nil, fmt.Errorf("no packages found in index.yaml")
-	}
-
-	var pkgs []*Package
-	for _, pkgPath := range index.Packages {
-		content, err := fetchGitHubFile("/"+pkgPath, config)
+	for _, raw := range []string{config.Registry.URL, config.Registry.RegistryRepoURL} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
 		if err != nil {
+			continue
+		}
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		// github.com/<owner>/<repo>[.git]
+		// api.github.com/repos/<owner>/<repo>/contents
+		if len(parts) >= 3 && parts[0] == "repos" {
+			parts = parts[1:]
+		}
+		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+			continue
+		}
+		return repoRef{
+			Owner:  parts[0],
+			Repo:   strings.TrimSuffix(parts[1], ".git"),
+			Branch: branch,
+		}, nil
+	}
+
+	return repoRef{}, errors.New("could not determine registry owner/repo from config (registry.url)")
+}
+
+// get issues a GET, sending the configured token when there is one.
+func get(target, token string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Clipack-Package-Manager")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return sharedHTTPClient().Do(req)
+}
+
+// authFailure reports whether a status code suggests the credentials are the
+// problem. GitHub answers an invalid token on raw.githubusercontent.com and
+// codeload with 404 rather than 401, so a stale token looks exactly like a
+// missing repository.
+func authFailure(status int) bool {
+	return status == http.StatusUnauthorized ||
+		status == http.StatusForbidden ||
+		status == http.StatusNotFound
+}
+
+// fetch performs a GET and, when a token is configured but the request fails in
+// a way that looks credential-related, retries anonymously. Without this an
+// expired token in config.yaml makes every public registry request fail.
+func fetch(target string, config *cnfg.Config) (*http.Response, error) {
+	token := config.Registry.Token
+
+	resp, err := get(target, token)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusOK || token == "" || !authFailure(resp.StatusCode) {
+		return resp, nil
+	}
+
+	resp.Body.Close()
+	return get(target, "")
+}
+
+// doGet fetches a URL and returns the whole body.
+func doGet(target string, config *cnfg.Config) ([]byte, error) {
+	resp, err := fetch(target, config)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GET %s: status %d: %s", target, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// fetchTarball downloads the whole registry in a single request and returns
+// repo-relative path -> contents. This replaces the previous approach of two
+// GitHub API calls per package file, which needed ~43 round trips for a
+// 21-package registry and burned through the 60/hour unauthenticated limit.
+func fetchTarball(ref repoRef, config *cnfg.Config) (map[string][]byte, error) {
+	target := fmt.Sprintf("%s/%s/%s/tar.gz/refs/heads/%s",
+		codeloadBaseURL, ref.Owner, ref.Repo, ref.Branch)
+
+	resp, err := fetch(target, config)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tarball fetch: status %d", resp.StatusCode)
+	}
+
+	gz, err := gzip.NewReader(io.LimitReader(resp.Body, maxTarballBytes))
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+	defer gz.Close()
+
+	files := make(map[string][]byte)
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tar: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		name := header.Name
+		// Strip the "<repo>-<branch>/" prefix GitHub adds.
+		if idx := strings.Index(name, "/"); idx >= 0 {
+			name = name[idx+1:]
+		}
+		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", name, err)
+		}
+		files[name] = data
+	}
+
+	if len(files) == 0 {
+		return nil, errors.New("tarball contained no yaml files")
+	}
+	return files, nil
+}
+
+// rawURL builds a raw.githubusercontent.com URL for a repo-relative path.
+func rawURL(ref repoRef, filePath string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s",
+		rawBaseURL, ref.Owner, ref.Repo, ref.Branch, strings.TrimPrefix(filePath, "/"))
+}
+
+// fetchRawFiles downloads the given paths concurrently. Unlike the previous
+// implementation it reports failures instead of silently dropping packages,
+// so a flaky network can no longer poison the cache with a partial registry.
+func fetchRawFiles(ref repoRef, paths []string, config *cnfg.Config) (map[string][]byte, error) {
+	type result struct {
+		path string
+		data []byte
+		err  error
+	}
+
+	results := make([]result, len(paths))
+	sem := make(chan struct{}, maxParallelFetches)
+	var wg sync.WaitGroup
+
+	for i, p := range paths {
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			data, err := doGet(rawURL(ref, p), config)
+			results[i] = result{path: p, data: data, err: err}
+		}(i, p)
+	}
+	wg.Wait()
+
+	files := make(map[string][]byte, len(paths))
+	var failures []string
+	for _, r := range results {
+		if r.err != nil {
+			failures = append(failures, r.path)
+			continue
+		}
+		files[r.path] = r.data
+	}
+
+	if len(failures) > 0 {
+		return files, fmt.Errorf("failed to fetch %d of %d registry files (first: %s)",
+			len(failures), len(paths), failures[0])
+	}
+	return files, nil
+}
+
+// parsePackages turns a path -> contents map into packages, in index order.
+func parsePackages(index IndexFile, files map[string][]byte) ([]*Package, error) {
+	var pkgs []*Package
+	var skipped []string
+
+	for _, pkgPath := range index.Packages {
+		data, ok := files[strings.TrimPrefix(pkgPath, "/")]
+		if !ok {
+			skipped = append(skipped, pkgPath)
 			continue
 		}
 
 		var pkg Package
-		if err := yaml.Unmarshal([]byte(content), &pkg); err != nil {
+		if err := yaml.Unmarshal(data, &pkg); err != nil {
+			skipped = append(skipped, pkgPath)
 			continue
 		}
-
-		parts := strings.Split(pkgPath, "/")
-		if len(parts) >= 3 {
-			pkg.Category = parts[1]
-		}
-
 		if pkg.Name == "" {
+			skipped = append(skipped, pkgPath)
 			continue
+		}
+
+		// packages/<category>/<name>.yaml
+		if parts := strings.Split(pkgPath, "/"); len(parts) >= 3 {
+			pkg.Category = parts[len(parts)-2]
 		}
 
 		pkgs = append(pkgs, &pkg)
 	}
 
 	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no valid packages found in registry")
+		return nil, errors.New("no valid packages found in registry")
 	}
-
-	if err := SaveToCache(pkgs, config); err != nil {
-		return nil, fmt.Errorf("error saving to cache: %v", err)
+	if len(skipped) > 0 {
+		return pkgs, fmt.Errorf("skipped %d unreadable package(s), first: %s", len(skipped), skipped[0])
 	}
-
 	return pkgs, nil
 }
 
-// LoadPackageFromRegistry loads a package by name from the registry
-func LoadPackageFromRegistry(name string, config *cnfg.Config) (*Package, error) {
-	packages, err := LoadFromCache(config)
-	if err == nil {
-		for _, pkg := range packages {
-			if pkg.Name == name {
-				return pkg, nil
+// FetchRegistry always talks to the network and returns the full package set.
+func FetchRegistry(config *cnfg.Config) ([]*Package, error) {
+	ref, err := resolveRepo(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fast path: one request for the entire registry.
+	if files, err := fetchTarball(ref, config); err == nil {
+		var index IndexFile
+		if data, ok := files["index.yaml"]; ok {
+			if err := yaml.Unmarshal(data, &index); err == nil && len(index.Packages) > 0 {
+				if pkgs, perr := parsePackages(index, files); len(pkgs) > 0 {
+					return pkgs, perr
+				}
 			}
 		}
 	}
 
-	indexContent, err := fetchGitHubFile("/index.yaml", config)
+	// Fallback: index + one raw request per package, in parallel.
+	indexData, err := doGet(rawURL(ref, "index.yaml"), config)
 	if err != nil {
-		return nil, fmt.Errorf("error fetching index: %v", err)
+		return nil, fmt.Errorf("fetching index.yaml: %w", err)
 	}
 
 	var index IndexFile
-	if err := yaml.Unmarshal([]byte(indexContent), &index); err != nil {
-		return nil, fmt.Errorf("error parsing index.yaml: %v", err)
+	if err := yaml.Unmarshal(indexData, &index); err != nil {
+		return nil, fmt.Errorf("parsing index.yaml: %w", err)
+	}
+	if len(index.Packages) == 0 {
+		return nil, errors.New("no packages listed in index.yaml")
 	}
 
-	var pkgPath string
-	for _, path := range index.Packages {
-		if strings.HasSuffix(path, "/"+name+".yaml") {
-			pkgPath = path
-			break
+	files, fetchErr := fetchRawFiles(ref, index.Packages, config)
+	pkgs, parseErr := parsePackages(index, files)
+	if len(pkgs) == 0 {
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		return nil, parseErr
+	}
+	if fetchErr != nil {
+		return pkgs, fetchErr
+	}
+	return pkgs, parseErr
+}
+
+// LoadAllPackagesFromRegistry returns the cached package set when it is still
+// fresh, otherwise refreshes it from the network and caches the result.
+// A partial fetch is returned to the caller but never written to the cache.
+func LoadAllPackagesFromRegistry(config *cnfg.Config) ([]*Package, error) {
+	if packages, err := LoadFromCache(config); err == nil && len(packages) > 0 {
+		return packages, nil
+	}
+	return RefreshRegistry(config)
+}
+
+// RefreshRegistry bypasses the cache, fetches, and stores the result.
+func RefreshRegistry(config *cnfg.Config) ([]*Package, error) {
+	packages, fetchErr := FetchRegistry(config)
+	if len(packages) == 0 {
+		return nil, fetchErr
+	}
+
+	// Only cache a complete fetch; a partial one would be served as if it
+	// were the whole registry until the interval expires.
+	if fetchErr == nil {
+		if err := SaveToCache(packages, config); err != nil {
+			return packages, fmt.Errorf("packages loaded but caching failed: %w", err)
 		}
 	}
 
-	if pkgPath == "" {
-		return nil, fmt.Errorf("package %s not found in registry", name)
+	return packages, fetchErr
+}
+
+// LoadPackageFromRegistry loads a single package by name.
+func LoadPackageFromRegistry(name string, config *cnfg.Config) (*Package, error) {
+	if packages, err := LoadFromCache(config); err == nil {
+		if p := FindByName(packages, name); p != nil {
+			return p, nil
+		}
 	}
 
-	content, err := fetchGitHubFile("/"+pkgPath, config)
+	packages, err := RefreshRegistry(config)
+	if p := FindByName(packages, name); p != nil {
+		return p, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("error fetching package: %v", err)
+		return nil, err
 	}
-
-	var pkg Package
-	if err := yaml.Unmarshal([]byte(content), &pkg); err != nil {
-		return nil, fmt.Errorf("error parsing package YAML: %v", err)
-	}
-
-	parts := strings.Split(pkgPath, "/")
-	if len(parts) >= 3 {
-		pkg.Category = parts[1]
-	}
-
-	return &pkg, nil
+	return nil, fmt.Errorf("package %q not found in registry", name)
 }

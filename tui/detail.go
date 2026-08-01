@@ -1,0 +1,133 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/lvim-tech/clipack/pkg"
+)
+
+// renderDetail builds the right-hand pane for a package. width is the usable
+// inner width of the pane, so long values wrap instead of breaking the layout.
+func renderDetail(entry packageItem, width int, s Styles) string {
+	if width < 20 {
+		width = 20
+	}
+
+	p := entry.pkg
+	var b strings.Builder
+
+	b.WriteString(s.DetailTitle.Render(p.Name))
+	if p.Version != "" {
+		b.WriteString(s.Muted.Render("  " + p.Version))
+	}
+	b.WriteString("\n\n")
+
+	valueWidth := width - detailKeyWidth - 1
+	if valueWidth < 10 {
+		valueWidth = 10
+	}
+	wrap := lipgloss.NewStyle().Width(valueWidth)
+
+	row := func(key, value string) {
+		if value == "" {
+			return
+		}
+		b.WriteString(lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			s.DetailKey.Render(key),
+			wrap.Render(s.DetailValue.Render(value)),
+		))
+		b.WriteString("\n")
+	}
+
+	row("Description", p.Description)
+	row("Category", p.Category)
+	row("Maintainer", p.Maintainer)
+	row("License", p.License)
+	row("Homepage", p.Homepage)
+	row("Commit", shortCommit(p.Commit))
+	if !p.UpdatedAt.IsZero() {
+		row("Updated", p.UpdatedAt.Format("2006-01-02 15:04"))
+	}
+	if len(p.Tags) > 0 {
+		row("Tags", strings.Join(p.Tags, ", "))
+	}
+	// Which ref this package is pinned to locally. It is per package: the
+	// header's method is only the default a fresh install starts from.
+	if entry.installed != nil {
+		row("Install method", installedRefMethod(entry))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(renderStatus(entry, s))
+
+	if len(p.Install.Steps) > 0 {
+		b.WriteString("\n" + s.DetailTitle.Render("Build steps") + "\n")
+		for i, step := range p.Install.Steps {
+			b.WriteString(s.Muted.Render(fmt.Sprintf("  %d. ", i+1)))
+			b.WriteString(wrap.Render(step) + "\n")
+		}
+	}
+
+	if len(p.Install.Binaries) > 0 {
+		b.WriteString("\n" + s.DetailTitle.Render("Binaries") + "\n")
+		for _, bin := range p.Install.Binaries {
+			b.WriteString(s.Muted.Render("  "+s.Icons.Bullet+" ") + bin + "\n")
+		}
+	}
+
+	if len(p.Install.AdditionalConfig) > 0 {
+		b.WriteString("\n" + s.DetailTitle.Render("Config files") + "\n")
+		for _, ac := range p.Install.AdditionalConfig {
+			b.WriteString(s.Muted.Render("  "+s.Icons.Bullet+" ") + ac.Filename + "\n")
+		}
+	}
+
+	return b.String()
+}
+
+// installedRefMethod is the method a package is pinned to on disk, defaulting
+// to version for a manifest written before the field existed.
+func installedRefMethod(entry packageItem) string {
+	if entry.installed == nil || entry.installed.InstallMethod == "" {
+		return pkg.MethodVersion
+	}
+	return entry.installed.InstallMethod
+}
+
+// renderStatus describes how the package relates to the local installation.
+func renderStatus(entry packageItem, s Styles) string {
+	if entry.installed == nil {
+		return s.Muted.Render("Not installed") + "\n"
+	}
+
+	method := installedRefMethod(entry)
+	installedRef := entry.installed.Ref(method)
+	if method == pkg.MethodCommit {
+		installedRef = shortCommit(installedRef)
+	}
+
+	line := s.OK.Render("Installed") +
+		s.Muted.Render(fmt.Sprintf("  %s: %s", method, installedRef)) + "\n"
+
+	if entry.hasUpdate() {
+		available := entry.pkg.Ref(method)
+		if method == pkg.MethodCommit {
+			available = shortCommit(available)
+		}
+		line += s.BadgeUpdate.Render("Update available") +
+			s.Muted.Render("  → "+available) + "\n"
+	}
+
+	return line
+}
+
+// shortCommit trims a full SHA down to something readable.
+func shortCommit(commit string) string {
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
+}

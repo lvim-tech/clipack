@@ -1,394 +1,100 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"log"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
-	"strings"
 
-	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
-	"github.com/lvim-tech/clipack/utils"
+	"github.com/lvim-tech/clipack/tui"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
-	forceRefresh  bool
-	installMethod string
+	installForceRefresh bool
+	installMethod       string
+	installYes          bool
 )
 
+// installCmd installs one or more packages by name. Without arguments it hands
+// over to the TUI rather than reimplementing a numbered-menu prompt.
 var installCmd = &cobra.Command{
-	Use:   "install [package-name]",
-	Short: "Install a package from registry",
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := cnfg.CreateDefaultConfig(); err != nil {
-			log.Fatalf("Error creating config file: %v", err)
-		}
+	Use:   "install [package...]",
+	Short: "Install packages from the registry",
+	Long: `Install one or more packages by name.
 
-		config, err := cnfg.LoadConfig()
-		if err != nil {
-			log.Fatalf("Error loading config: %v", err)
-		}
-
-		if installMethod == "" {
-			installMethod = config.Options.InstallMethod
-		}
-
-		var packages []*pkg.Package
-		if forceRefresh {
-			fmt.Println("Forcing refresh of the registry cache...")
-
-			cachePath := pkg.GetCacheFilePath(config)
-			os.Remove(cachePath)
-			timestampPath := filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
-			os.Remove(timestampPath)
-
-			packages, err = pkg.LoadAllPackagesFromRegistry(config)
-			if err != nil {
-				log.Fatalf("Error loading packages: %v", err)
-			}
-
-			if err := pkg.SaveToCache(packages, config); err != nil {
-				log.Printf("Warning: could not cache packages: %v", err)
-			} else {
-				fmt.Println("Packages saved to cache successfully.")
-			}
-		} else {
-			cachePath := pkg.GetCacheFilePath(config)
-			if _, err := os.Stat(cachePath); os.IsNotExist(err) {
-				fmt.Println("Cache not found. Fetching packages from registry...")
-				packages, err = pkg.LoadAllPackagesFromRegistry(config)
-				if err != nil {
-					log.Fatalf("Error loading packages: %v", err)
-				}
-
-				if err := pkg.SaveToCache(packages, config); err != nil {
-					log.Printf("Warning: could not cache packages: %v", err)
-				}
-			} else {
-				packages, err = pkg.LoadFromCache(config)
-				if err != nil {
-					log.Fatalf("Error loading packages from cache: %v", err)
-				}
-			}
-		}
-
-		if len(packages) == 0 {
-			log.Fatalf("No packages found in registry")
-		}
-
-		var packageName string
+Called without arguments it opens the interactive interface, where packages can
+be browsed, filtered and installed.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			fmt.Println("\nAvailable packages:")
-			fmt.Println("------------------")
-			for i, p := range packages {
-				tags := strings.Join(p.Tags, ", ")
-				if tags == "" {
-					tags = "-"
-				}
-
-				displayIdentifier := p.Version
-				if installMethod == "commit" {
-					displayIdentifier = p.Commit
-				}
-
-				fmt.Printf("%d) %s (%s)\n", i+1, p.Name, displayIdentifier)
-				fmt.Printf("   Description: %s\n", p.Description)
-				fmt.Printf("   Tags: %s\n", tags)
-				fmt.Printf("   Updated: %s\n", p.UpdatedAt.Format("2006-01-02"))
-				fmt.Println()
-			}
-
-			reader := bufio.NewReader(os.Stdin)
-			for {
-				fmt.Print("Enter package number to install (or 'q' to quit): ")
-				input, err := reader.ReadString('\n')
-				if err != nil {
-					log.Fatalf("Error reading input: %v", err)
-				}
-
-				input = strings.TrimSpace(input)
-				if input == "q" {
-					fmt.Println("Installation cancelled.")
-					os.Exit(0)
-				}
-
-				num, err := strconv.Atoi(input)
-				if err != nil || num < 1 || num > len(packages) {
-					fmt.Printf("Please enter a number between 1 and %d\n", len(packages))
-					continue
-				}
-
-				p := packages[num-1]
-				fmt.Println("\nSelected package details:")
-				fmt.Println("------------------------")
-				fmt.Printf("Name: %s\n", p.Name)
-				if installMethod == "commit" {
-					fmt.Printf("Commit: %s\n", p.Commit)
-				} else {
-					fmt.Printf("Version: %s\n", p.Version)
-				}
-				fmt.Printf("Description: %s\n", p.Description)
-				fmt.Printf("Maintainer: %s\n", p.Maintainer)
-				if p.License != "" {
-					fmt.Printf("License: %s\n", p.License)
-				}
-				if p.Homepage != "" {
-					fmt.Printf("Homepage: %s\n", p.Homepage)
-				}
-				fmt.Printf("Tags: %s\n", strings.Join(p.Tags, ", "))
-				fmt.Printf("Updated: %s\n\n", p.UpdatedAt.Format("2006-01-02 15:04:05"))
-
-				if utils.AskForConfirmation("Proceed with installation?") {
-					packageName = p.Name
-					break
-				}
-				fmt.Println("Installation cancelled. Select another package or 'q' to quit.")
-			}
-		} else {
-			packageName = args[0]
+			return tui.Run()
 		}
 
-		var selectedPackage *pkg.Package
-		if cachedPackages, err := pkg.LoadFromCache(config); err == nil {
-			for _, p := range cachedPackages {
-				if p.Name == packageName {
-					selectedPackage = p
-					break
-				}
-			}
-		}
-
-		if selectedPackage == nil {
-			var err error
-			selectedPackage, err = pkg.LoadPackageFromRegistry(packageName, config)
-			if err != nil {
-				log.Fatalf("Error: %v", err)
-			}
-		}
-
-		binDir := config.Paths.Bin
-		configDir := filepath.Join(config.Paths.Configs, selectedPackage.Name)
-		buildDir := filepath.Join(config.Paths.Build, selectedPackage.Name)
-		manDir := config.Paths.Man
-
-		if _, err := os.Stat(buildDir); err == nil {
-			if utils.AskForConfirmation(fmt.Sprintf("Build directory %s exists. Remove it?", buildDir)) {
-				if err := os.RemoveAll(buildDir); err != nil {
-					log.Fatalf("Error removing build directory: %v", err)
-				}
-			} else {
-				fmt.Println("Installation cancelled.")
-				return
-			}
-		}
-
-		for _, dir := range []string{binDir, configDir, buildDir, manDir} {
-			if err := utils.EnsureDirectoryExists(dir); err != nil {
-				log.Fatalf("Error creating directory %s: %v", dir, err)
-			}
-		}
-
-		if err := os.Chdir(buildDir); err != nil {
-			log.Fatalf("Error changing to directory %s: %v", buildDir, err)
-		}
-
-		for k, v := range selectedPackage.Install.Environment {
-			os.Setenv(k, v)
-		}
-
-		for _, step := range selectedPackage.Install.Steps {
-			if strings.Contains(step, "git clone") {
-				var cloneCmd string
-				if installMethod == "commit" {
-					cloneCmd = fmt.Sprintf("%s", step)
-				} else {
-					// Corrected the order of arguments for git clone and removed the extra argument
-					cloneCmd = fmt.Sprintf("git clone --branch %s --single-branch %s .", selectedPackage.Version, strings.Split(step, " ")[2])
-				}
-				fmt.Printf("Executing: %s\n", cloneCmd)
-				cmdParts := strings.Fields(cloneCmd)
-				cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					log.Fatalf("Error executing step '%s': %v", cloneCmd, err)
-				}
-
-				if installMethod == "commit" {
-					checkoutCmd := fmt.Sprintf("git checkout %s", selectedPackage.Commit)
-					fmt.Printf("Executing: %s\n", checkoutCmd)
-					cmdParts = strings.Fields(checkoutCmd)
-					cmd = exec.Command(cmdParts[0], cmdParts[1:]...)
-					cmd.Stdout = os.Stdout
-					cmd.Stderr = os.Stderr
-					if err := cmd.Run(); err != nil {
-						log.Fatalf("Error executing step '%s': %v", checkoutCmd, err)
-					}
-				}
-			} else {
-				fmt.Printf("Executing: %s\n", step)
-				cmdParts := strings.Fields(step)
-				cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					log.Fatalf("Error executing step '%s': %v", step, err)
-				}
-			}
-		}
-
-		for _, binPath := range selectedPackage.Install.Binaries {
-			srcPath := filepath.Join(buildDir, binPath)
-			dstPath := filepath.Join(binDir, filepath.Base(binPath))
-			if _, err := os.Lstat(dstPath); err == nil {
-				if err := os.Remove(dstPath); err != nil {
-					log.Printf("Error removing existing binary %s: %v", dstPath, err)
-				}
-			}
-			fmt.Printf("Copying binary %s to %s\n", binPath, dstPath)
-			if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-				log.Printf("Error copying binary %s: %v", binPath, err)
-			}
-			if err := os.Chmod(dstPath, 0755); err != nil {
-				log.Printf("Error making binary executable %s: %v", dstPath, err)
-			}
-		}
-
-		for _, confPath := range selectedPackage.Install.Configs {
-			srcPath := filepath.Join(buildDir, confPath)
-			dstPath := filepath.Join(configDir, filepath.Base(confPath))
-
-			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-				log.Printf("Warning: config file %s does not exist", srcPath)
-				continue
-			}
-
-			if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-				log.Printf("Warning: could not copy config %s: %v", confPath, err)
-			} else {
-				fmt.Printf("Copied config %s to %s\n", confPath, dstPath)
-			}
-		}
-
-		for _, manPage := range selectedPackage.Install.Man {
-			srcPath := filepath.Join(buildDir, manPage)
-
-			ext := filepath.Ext(manPage)
-			if len(ext) < 2 {
-				log.Printf("Warning: could not determine section for %s", manPage)
-				continue
-			}
-
-			section := "man" + ext[1:]
-			sectionDir := filepath.Join(manDir, section)
-
-			if err := os.MkdirAll(sectionDir, 0755); err != nil {
-				log.Printf("Error creating man section directory %s: %v", sectionDir, err)
-				continue
-			}
-
-			dstPath := filepath.Join(sectionDir, filepath.Base(manPage))
-
-			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-				log.Printf("Warning: man page %s does not exist", srcPath)
-				continue
-			}
-
-			if err := pkg.CopyFile(srcPath, dstPath); err != nil {
-				log.Printf("Warning: could not copy man page %s: %v", manPage, err)
-			} else {
-				fmt.Printf("Copied man page %s to %s\n", manPage, dstPath)
-			}
-		}
-
-		for _, additionalConfig := range selectedPackage.Install.AdditionalConfig {
-			dstPath := filepath.Join(configDir, additionalConfig.Filename)
-
-			dstDir := filepath.Dir(dstPath)
-			if err := os.MkdirAll(dstDir, 0755); err != nil {
-				log.Printf("Warning: could not create directory structure for %s: %v", dstPath, err)
-				continue
-			}
-
-			var content []byte
-			if strings.HasPrefix(additionalConfig.Content, "http://") || strings.HasPrefix(additionalConfig.Content, "https://") {
-				var err error
-				content, err = utils.DownloadContent(additionalConfig.Content)
-				if err != nil {
-					log.Printf("Warning: could not download content for %s: %v", additionalConfig.Filename, err)
-					continue
-				}
-			} else {
-				content = []byte(additionalConfig.Content)
-			}
-
-			if err := os.WriteFile(dstPath, content, 0644); err != nil {
-				log.Printf("Warning: could not write additional config %s: %v", additionalConfig.Filename, err)
-			} else {
-				fmt.Printf("Created additional config %s\n", dstPath)
-			}
-		}
-
-		// Add install_method to the package configuration before saving it
-		selectedPackage.InstallMethod = installMethod
-
-		packageConfigPath := filepath.Join(configDir, "package.yaml")
-		packageData, err := yaml.Marshal(selectedPackage)
+		config, err := loadConfig()
 		if err != nil {
-			log.Fatalf("Error marshaling package data: %v", err)
-		}
-		if err := os.WriteFile(packageConfigPath, packageData, 0644); err != nil {
-			log.Fatalf("Error writing package config file: %v", err)
+			return err
 		}
 
-		for _, script := range selectedPackage.PostInstall.Scripts {
-			scriptPath := filepath.Join(buildDir, script.Filename)
-			if err := os.WriteFile(scriptPath, []byte(script.Content), 0755); err != nil {
-				log.Printf("Warning: could not write post-install script %s: %v", script.Filename, err)
-			} else {
-				fmt.Printf("Created post-install script %s\n", scriptPath)
+		packages, err := loadPackages(config, installForceRefresh)
+		if err != nil {
+			return err
+		}
 
-				dstScriptPath := filepath.Join(binDir, filepath.Base(script.Filename))
-				if err := os.Rename(scriptPath, dstScriptPath); err != nil {
-					log.Printf("Error moving script %s: %v", scriptPath, err)
-				}
-				if err := os.Chmod(dstScriptPath, 0755); err != nil {
-					log.Printf("Error making script executable %s: %v", dstScriptPath, err)
-				}
+		installed, err := pkg.InstalledMap(config)
+		if err != nil {
+			return err
+		}
+
+		installer := newInstaller(config)
+		method := installer.ResolveMethod(installMethod)
+
+		for _, name := range args {
+			selected := pkg.FindByName(packages, name)
+			if selected == nil {
+				return fmt.Errorf("package %q not found in registry", name)
+			}
+
+			// Installing over an existing install would leave the previous
+			// version's binaries and man pages behind: only update knows what
+			// they were, because it reads the manifest first.
+			if installed[name] != nil {
+				return fmt.Errorf("%s is already installed: use 'clipack update %s', or 'clipack remove %s' first", name, name, name)
+			}
+
+			if !installYes && !confirmInstall(selected, method, config.Paths.Build) {
+				fmt.Println("Skipped", name)
+				continue
+			}
+
+			// Copy so the cached registry entry is not mutated by the installer.
+			candidate := *selected
+			if err := installer.Install(&candidate, method); err != nil {
+				return fmt.Errorf("installing %s: %w", name, err)
 			}
 		}
 
-		if config.Options.CleanupBuild {
-			if err := os.RemoveAll(buildDir); err != nil {
-				log.Printf("Warning: could not remove build directory: %v", err)
-			}
-		}
-
-		fmt.Printf("\nSuccessfully installed %s\n", selectedPackage.Name)
-		if installMethod == "commit" {
-			fmt.Printf("Commit: %s\n", selectedPackage.Commit)
-		} else {
-			fmt.Printf("Version: %s\n", selectedPackage.Version)
-		}
-		fmt.Printf("Binaries: %s\n", binDir)
-		fmt.Printf("Configs: %s\n", configDir)
-		fmt.Printf("Man pages: %s\n", manDir)
-
-		if len(selectedPackage.Install.Binaries) > 0 {
-			fmt.Printf("\nTo add the binaries to your PATH, add this line to your shell's RC file:\n")
-			fmt.Printf("export PATH=\"%s:$PATH\"\n", binDir)
-		}
+		return nil
 	},
 }
 
+// confirmInstall prints a summary and asks for confirmation.
+func confirmInstall(p *pkg.Package, method, buildDir string) bool {
+	fmt.Printf("\n%s\n", p.Name)
+	fmt.Printf("  description : %s\n", p.Description)
+	fmt.Printf("  %-11s : %s\n", method, p.Ref(method))
+	fmt.Printf("  maintainer  : %s\n", p.Maintainer)
+	if p.License != "" {
+		fmt.Printf("  license     : %s\n", p.License)
+	}
+	if p.Homepage != "" {
+		fmt.Printf("  homepage    : %s\n", p.Homepage)
+	}
+	fmt.Printf("  build dir   : %s\n\n", buildDir)
+
+	return askYes("Proceed with installation?")
+}
+
 func init() {
-	installCmd.Flags().BoolVarP(&forceRefresh, "force-refresh", "f", false, "Force refresh of the registry cache")
+	installCmd.Flags().BoolVarP(&installForceRefresh, "force-refresh", "f", false, "Force refresh of the registry cache")
 	installCmd.Flags().StringVarP(&installMethod, "install-method", "m", "", "Installation method: version or commit")
+	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "Do not ask for confirmation")
 	rootCmd.AddCommand(installCmd)
 }

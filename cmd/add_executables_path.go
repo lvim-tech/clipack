@@ -2,49 +2,40 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/lvim-tech/clipack/cnfg"
-	"github.com/lvim-tech/clipack/utils"
 	"github.com/spf13/cobra"
 )
 
+// addExecutablesPathCmd appends the managed bin and man directories to the
+// user's shell rc file. Re-running it is safe: the helper skips the write when
+// the path is already referenced.
 var addExecutablesPathCmd = &cobra.Command{
-	Use:   "add-executables-path",
-	Short: "Add executables and man paths to your shell configuration",
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := cnfg.CreateDefaultConfig(); err != nil {
-			log.Fatalf("Error creating config file: %v", err)
-		}
-
-		config, err := cnfg.LoadConfig()
+	Use:     "add-executables-path",
+	Aliases: []string{"path"},
+	Short:   "Add the bin and man paths to your shell configuration",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := loadConfig()
 		if err != nil {
-			log.Fatalf("Error loading config: %v", err)
+			return err
 		}
-
-		binPath := config.Paths.Bin
-		manPath := config.Paths.Man
-
-		fmt.Printf("The following paths will be added to your shell configuration:\n")
-		fmt.Printf("Executables (bin): %s\n", binPath)
-		fmt.Printf("Man pages: %s\n", manPath)
 
 		shellConfigFilePath, err := cnfg.GetShellConfigFilePath()
 		if err != nil {
-			log.Fatalf("Error determining shell config file path: %v", err)
-		}
-		fmt.Printf("These paths will be added to: %s\n", shellConfigFilePath)
-
-		if !utils.AskForConfirmation("Do you want to proceed with adding these paths?") {
-			fmt.Println("Operation cancelled.")
-			return
+			return err
 		}
 
-		if err := cnfg.AddPathsToShellConfig(binPath, manPath); err != nil {
-			log.Fatalf("Error adding paths to shell configuration: %v", err)
+		fmt.Printf("These paths will be added to %s:\n", shellConfigFilePath)
+		fmt.Printf("  bin : %s\n", config.Paths.Bin)
+		fmt.Printf("  man : %s\n\n", config.Paths.Man)
+
+		if !askYes("Proceed?") {
+			fmt.Println("Cancelled.")
+			return nil
 		}
 
-		fmt.Println("Executables and man paths have been added to your shell configuration.")
+		return cnfg.AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man)
 	},
 }
 

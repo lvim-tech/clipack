@@ -1,122 +1,361 @@
 # Clipack
 
-Clipack is a package management tool that allows you to easily install, update, and remove packages on your system.
+Clipack builds CLI tools from source and manages their binaries, man pages and
+configuration files. Packages are described by YAML files in a git registry, so
+adding a tool means adding a file — no plugin, no scripting.
 
-**Current Version: Beta v0.0.70**
+It ships with a terminal interface built on [Bubble Tea](https://github.com/charmbracelet/bubbletea):
+browse the registry, filter it, and watch a build stream live. Every operation is
+also available non-interactively for scripts.
 
-## Installation
+**Current version: Beta v0.0.72**
 
-To install Clipack, follow these steps:
+---
 
-1. Clone the repository:
-
-    ```sh
-    git clone https://github.com/lvim-tech/clipack.git
-    cd clipack
-    ```
-
-2. Build the program:
-
-    ```sh
-    go build -o bin/clipack
-    ```
-
-3. Move the executable to your executable files directory:
-    ```sh
-    mv bin/clipack /usr/local/bin/
-    ```
-
-## Usage
-
-### Installing Packages
-
-To install a package, use the `install` command:
+## Install
 
 ```sh
-clipack install [package-name]
+git clone https://github.com/lvim-tech/clipack.git
+cd clipack
+go build -o clipack .
+sudo mv clipack /usr/local/bin/
 ```
 
-You can specify the installation method using the `--install-method` flag. Possible values are `version` and `commit`:
+Requires Go 1.24 or newer.
+
+On first run clipack asks where to keep its files and offers to add `bin/` and
+`man/` to your shell rc file. The default layout is:
+
+```
+~/clipack/
+├── bin/        installed binaries
+├── configs/    per-package configuration + the install manifest
+├── build/      source trees (removed after install unless cleanup_build: false)
+├── man/        man pages, split into man1/, man5/, …
+└── registry/   the registry cache
+```
+
+The configuration itself lives at `~/.config/clipack/config.yaml`.
+
+---
+
+## The interface
+
+Run `clipack` with no arguments:
+
+```
+  clipack    21 packages · 8 installed · 13 updates  ·  method: version
+  All    Installed    Updates (13)
+ ┌───────────────────────────────────┐┌──────────────────────────────────────────┐
+ │ ▌ atuin v18.6.1 ↑ update          ││ atuin  v18.6.1                           │
+ │     Atuin - Magical shell history ││                                          │
+ │                                   ││ Description   Atuin - Magical shell …    │
+ │   bat v0.25.0 ↑ update            ││ Category      cli                        │
+ │     A cat(1) clone with syntax …  ││ Maintainer    Atuin Team                 │
+ │                                   ││ License       MIT                        │
+ │   cronboard 2.1.0 ✓ installed     ││ Homepage      https://github.com/…       │
+ │     Fast TUI app launcher and     ││                                          │
+ │     fuzzy finder for GNU/Linux    ││ Installed  commit: 8c18b2e960bd          │
+ │                                   ││ Update available  → a272ea753a34         │
+ │   ● ○ ○ ○                         ││                                          │
+ └───────────────────────────────────┘└──────────────────────────────────────────┘
+```
+
+| Key | Action |
+|---|---|
+| `↑`/`k`, `↓`/`j` | move within the focused pane |
+| `→`/`l` | focus the details pane |
+| `←`/`h`, `esc` | focus the list |
+| `tab`, `shift+tab` | switch between **All**, **Installed** and **Updates** |
+| `i` or `enter` | install the selected package |
+| `u` | update it |
+| `x` | remove it |
+| | *a package offers install, or update and remove — never both* |
+| `m` | toggle between the `version` and `commit` install method |
+| `r` | refresh the registry cache |
+| `/` | filter by name, description, category or tag |
+| `pgup` / `pgdn` | page the focused pane |
+| `?` | expanded help |
+| `q`, `ctrl+c` | quit |
+
+The focused pane is the one the movement keys drive; it is drawn with the accent
+border. `i`, `u` and `x` always act on the selected package, so they work from
+either pane.
+
+The help line at the bottom follows the cursor: it offers `i` for a package that
+is not installed, and `u` and `x` for one that is. Reinstalling over an existing
+install is refused — it would leave the previous version's binaries behind, since
+only `update` reads the old manifest and knows what to clean up. Use `update` to
+upgrade, or `remove` and then `install` for a clean slate.
+
+### Selecting and copying text
+
+The details pane has a text cursor and vi's visual mode, so a homepage, a commit
+or a whole build step can be copied without reaching for the mouse:
+
+| Key | Action |
+|---|---|
+| `h` `j` `k` `l`, arrows | move the cursor (`h` at column 0 returns to the list) |
+| `0`, `$` | start / end of line |
+| `g`, `G` | first / last line |
+| `ctrl+u`, `ctrl+d` | half a page |
+| `v` | character-wise selection |
+| `V` | line-wise selection |
+| `y` | copy the selection — with none, copies the cursor line |
+| `esc` | cancel the selection; again to return to the list |
+
+Copying uses the system clipboard (`wl-copy`, `xclip`, `xsel`, `pbcopy`). When
+none is available — a bare SSH session — it falls back to OSC 52 and asks your
+terminal emulator to do it instead.
+
+Every install, update and remove is confirmed first, then runs on the **run**
+screen, where the build's output is streamed line by line with a step counter.
+
+---
+
+## Commands
+
+Each command works without the interface, so clipack can be scripted.
+
+### install
 
 ```sh
-clipack install [package-name] --install-method=version
+clipack install bat                 # one package
+clipack install bat fzf zoxide      # several
+clipack install bat -y              # no confirmation prompt
+clipack install bat -m commit       # pin to the registry's commit
+clipack install bat -f              # refresh the registry cache first
+clipack install                     # no arguments → opens the interface
 ```
 
-If the `--install-method` flag is not specified, the value from the configuration file will be used.
+`-m/--install-method` accepts `version` (checks out the tag in `version:`) or
+`commit` (checks out the sha in `commit:`). Without the flag the
+`options.install_method` value from the configuration is used.
 
-You can force refresh the package registry cache by using the `--force-refresh` flag:
+### update
 
 ```sh
-clipack install [package-name] --force-refresh
+clipack update                      # list what is out of date
+clipack update --all                # update everything, confirming each
+clipack update bat fzf              # update named packages
+clipack update --all -y             # unattended
 ```
 
-### Updating Packages
+Each package is updated using the method it was installed with, so a package
+pinned to a commit is not silently moved onto a version tag.
 
-To update a package, use the `update` command:
+### remove
 
 ```sh
-clipack update [package-name]
+clipack remove bat
+clipack remove bat fzf -y
+clipack rm bat                      # alias
 ```
 
-You can specify the installation method using the `--install-method` flag. Possible values are `version` and `commit`:
+Removal is driven by the manifest written at install time
+(`configs/<name>/package.yaml`), which is the only accurate record of what was
+put on disk — the registry entry may have changed since.
+
+### list
 
 ```sh
-clipack update [package-name] --install-method=version
+clipack list                        # every package, as a table
+clipack list --installed            # only what is installed
+clipack list --updates              # only what is out of date
+clipack list -f                     # refresh the cache first
 ```
 
-If the `--install-method` flag is not specified, the value from the configuration file will be used.
+```
+NAME        VERSION  STATUS     CATEGORY       DESCRIPTION
+atuin       v18.6.1  update     cli            Atuin - Magical shell history
+bat         v0.25.0  update     cli            A cat(1) clone with syntax highlighting
+cronboard   2.1.0    installed  cli            Fast TUI app launcher and fuzzy finder
+```
 
-You can force refresh the package registry cache by using the `--force-refresh` flag:
+### preview
 
 ```sh
-clipack update [package-name] --force-refresh
+clipack preview bat                 # the full registry record as YAML
+clipack preview bat -f
 ```
 
-### Removing Packages
-
-To remove a package, use the `remove` command:
+### add-executables-path
 
 ```sh
-clipack remove [package-name]
+clipack add-executables-path        # alias: clipack path
 ```
 
-### Previewing Packages
+Appends `bin/` and `man/` to your shell rc file (`.bashrc`, `.zshrc` or
+`config.fish`). Safe to run repeatedly — it skips the write if the path is
+already there.
 
-To preview the available packages in the registry, use the `preview` command:
+### theme
 
 ```sh
-clipack preview
+clipack theme                       # list every theme, mark the active one
+clipack theme LvimNord_dark         # switch
+clipack theme --colors              # show the resolved palette
 ```
 
-You can preview a specific package by providing its name:
+See [Theming](#theming) below.
+
+### update-config
 
 ```sh
-clipack preview [package-name]
+clipack update-config
 ```
 
-You can force refresh the package registry cache by using the `--force-refresh` flag:
+Repoints the installation directory. The `registry` and `options` sections of
+your existing configuration are preserved, so a token or a custom install method
+survives.
+
+---
+
+## Configuration
+
+`~/.config/clipack/config.yaml`:
+
+```yaml
+registry:
+    url: https://github.com/lvim-tech/clipack-registry.git
+    registryRepoURL: https://api.github.com/repos/lvim-tech/clipack-registry/contents
+    branch: main
+    update_interval: 24h
+    # token: ghp_…            # only needed for a private registry
+
+paths:
+    base: /home/user/clipack
+    registry: /home/user/clipack/registry
+    bin: /home/user/clipack/bin
+    configs: /home/user/clipack/configs
+    build: /home/user/clipack/build
+    man: /home/user/clipack/man
+
+options:
+    auto_symlink: true
+    backup_configs: true
+    cleanup_build: true # remove the source tree after a successful install
+    install_method: version # or: commit
+
+theme:
+    name: default
+```
+
+| Key | Meaning |
+|---|---|
+| `registry.url` | The registry repository. Owner and name are derived from it. |
+| `registry.branch` | Branch to read the registry from. |
+| `registry.update_interval` | How long a cached registry stays fresh. |
+| `registry.token` | Only required for a private registry. An invalid token is ignored — clipack falls back to anonymous access. |
+| `options.install_method` | Default for `install`; per-command via `-m`. |
+| `options.cleanup_build` | Whether the build tree is deleted after installing. |
+
+All paths must be absolute.
+
+---
+
+## Theming
+
+Colours, borders and glyphs all come from the `theme` section of
+`config.yaml`. A theme is a **base** — either built in or a file — plus optional
+overrides.
 
 ```sh
-clipack preview --force-refresh
+clipack theme                       # what is available, and what is active
+clipack theme LvimNord_dark         # switch
+clipack theme --colors              # the resolved palette
 ```
 
-### Listing Packages
+### Built-in themes
 
-To list available packages, use the `list` command:
+| Name | What it is |
+|---|---|
+| `default` | Adapts to a light or dark terminal background. |
+| `mono` | No colour at all — emphasis comes from weight and dimming, glyphs are ASCII, borders are square. For a serial console, a recording, or a palette clipack cannot know. |
+
+### Installing generated themes
+
+[lvim-colorscheme](https://github.com/lvim-tech/lvim-colorscheme) generates a
+clipack theme for each of its 48 styles. Copy them in once:
 
 ```sh
-clipack list
+mkdir -p ~/.config/clipack/themes
+cp ~/path/to/lvim-colorscheme/extras/clipack/*.yaml ~/.config/clipack/themes/
+clipack theme LvimNord_dark
 ```
 
-You can force refresh the package registry cache by using the `--force-refresh` flag:
+Any `.yaml` file in `~/.config/clipack/themes` becomes selectable by its
+filename, so hand-written themes work the same way.
 
-```sh
-clipack list --force-refresh
+### Writing a theme
+
+```yaml
+name: LvimNord_dark
+
+# normal | rounded | thick | double | hidden | none
+border: normal
+
+# unicode | ascii
+icons: unicode
+
+colors:
+    accent: "#a58aa0" # selection cursor, focused border, title badge
+    accent_alt: "#8097af" # section headings, active tab, step markers
+    text: "#b3bac6" # default foreground
+    muted: "#677185" # descriptions, labels, hints, build output
+    subtle: "#3c475a" # unfocused pane borders
+    success: "#97ab86" # installed packages, completed operations
+    warning: "#cbae72" # available updates, non-fatal problems
+    error: "#af7177" # failures
+    title_fg: "#232831" # text of the title badge, drawn on accent
 ```
 
-### Example Package YAML Configuration File
+A colour is a hex value (`#b48ead` or `#abc`) or an ANSI palette index (`0`–`255`).
+To follow the terminal's background, give both variants:
 
-Here is an example of a package configuration:
+```yaml
+colors:
+    text: { light: "#1c1c1c", dark: "#e5e9f0" }
+```
+
+Leaving a colour out is fine — it falls back to the base theme. Leaving all of
+them out means clipack uses the terminal's own colours for that role.
+
+### Overriding
+
+Anything in `config.yaml` wins over the theme, so a single tweak does not mean
+copying the palette:
+
+```yaml
+theme:
+    name: LvimNord_dark
+    border: double # this theme, but square-ish borders
+    colors:
+        accent: "#ff0000" # and a different cursor colour
+```
+
+`clipack theme <name>` tells you when such an override is still in place, since
+that is the usual reason switching appears to do nothing.
+
+A theme that cannot be resolved — a typo, or a file that was deleted — does not
+stop clipack. The interface falls back to `default` and shows the reason in its
+status line.
+
+---
+
+## Registry
+
+Packages come from [clipack-registry](https://github.com/lvim-tech/clipack-registry).
+`index.yaml` lists the package files; the directory a file sits in becomes its
+category:
+
+```yaml
+packages:
+    - packages/cli/bat.yaml
+    - packages/file_managers/yazi.yaml
+```
+
+A package file:
 
 ```yaml
 name: vivid
@@ -129,9 +368,7 @@ maintainer: sharkdp
 updated_at: 2025-02-24T13:45:00Z
 tags:
     - cli
-    - ls
     - colors
-    - themes
 install:
     source:
         type: git
@@ -142,24 +379,100 @@ install:
         - cargo build --release
     binaries:
         - target/release/vivid
+    man:
+        - man/man1/vivid.1
     additional-config:
         - filename: config.sh
           content: |
               #!/usr/bin/env bash
-
-              BASE_PATH=$(grep 'base:' $HOME/.config/clipack/config.yaml | sed 's/.*base: //')
-
-              if [ -z "$THEME" ]; then
-                  THEME="LvimDark"
-              fi
-
-              export LS_COLORS="$($BASE_PATH/bin/vivid generate $BASE_PATH/configs/vivid/$THEME.yml)"
+              export LS_COLORS="$(vivid generate lvim)"
+        - filename: themes/lvim.yml
+          content: https://raw.githubusercontent.com/…/lvim.yml
 ```
 
-## Registry
+**Fields**
 
-Clipack uses package registry files from [Clipack Registry](https://github.com/lvim-tech/clipack-registry). You can specify a different registry URL in the configuration file if needed.
+| Field | Meaning |
+|---|---|
+| `version` / `commit` | The two refs a package can be pinned to. |
+| `install.source.url` | Preferred source of the clone URL. |
+| `install.steps` | Shell commands, run in order inside the build directory. |
+| `install.binaries` | Paths, relative to the build directory, copied into `bin/`. |
+| `install.configs` | Files copied from the build tree into `configs/<name>/`. |
+| `install.man` | Man pages; the extension picks the section (`.1` → `man1/`). |
+| `install.additional-config` | Files written into `configs/<name>/`. A value starting with `http://` or `https://` is downloaded; anything else is used literally. `.sh` files are made executable. |
+| `install.environment` | Extra environment variables for the build. |
+| `post-install.scripts` | Scripts written into `bin/` and made executable. |
+
+**How steps run**
+
+Each step is executed through `sh -c` inside the build directory, so quoting,
+pipes and `&&` behave as written. The `git clone` step is rewritten to honour the
+selected method:
+
+- `version` → `git clone --branch <version> --single-branch --depth 1 <url> .`
+- `commit` → `git clone <url> .` followed by `git checkout <commit>`
+
+so the ref you asked for is the ref you get.
+
+---
+
+## How it works
+
+Clipack fetches the whole registry as a single repository tarball from
+`codeload.github.com`, which is one HTTP request for the entire package set. If
+that is unavailable it falls back to one raw request per file, eight at a time.
+The result is cached in `registry/packages_cache.gob` for
+`registry.update_interval`. A partial fetch is shown but never cached, so a
+network hiccup cannot make packages disappear for a day.
+
+Installing a package builds it in `build/<name>/`, copies the declared artifacts
+into place, and writes the resolved package definition to
+`configs/<name>/package.yaml`. That manifest is what `list`, `update` and
+`remove` read to know what is installed and what it was pinned to.
+
+---
+
+## Development
+
+```sh
+go build ./...
+go vet ./...
+gofmt -l .
+go test ./... -race -cover
+go build -o bin/clipack . && ./bin/clipack
+```
+
+| Package | Tests | Coverage |
+|---|---:|---:|
+| `pkg` | 88 | 84.6 % |
+| `tui` | 164 | 85.9 % |
+| `cmd` | 85 | 82.2 % |
+| `cnfg` | 76 | 87.7 % |
+| `utils` | 16 | 95.2 % |
+
+The tests are hermetic — no network and no access to your real installation.
+Registry fetches run against an in-process `httptest` server, every test points
+`HOME` at a temporary directory, the Bubble Tea model is driven by feeding it
+messages rather than by opening a terminal, and the commands resolve packages
+from a pre-seeded cache so an install builds for real from shell built-ins.
+
+Layout:
+
+| Directory | Contents |
+|---|---|
+| `cmd/` | Cobra commands. Argument parsing only. |
+| `tui/` | The Bubble Tea interface. |
+| `pkg/` | Package types, registry access, cache, installer. |
+| `cnfg/` | Configuration loading and the shell rc integration. |
+| `utils/` | Small shared helpers. |
+| `scripts/` | Maintenance scripts for the registry repository. |
+
+`pkg.Installer` reports progress as `pkg.Event` values through a callback rather
+than printing, which is why the CLI and the TUI can share one implementation.
+
+---
 
 ## License
 
-This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
+BSD 3-Clause — see [LICENSE](LICENSE).

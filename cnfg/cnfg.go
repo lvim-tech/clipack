@@ -1,25 +1,34 @@
+// Package cnfg loads and writes clipack's configuration.
+//
+// The configuration lives at ~/.config/clipack/config.yaml and names three
+// things: where the registry is, where packages are installed, and the defaults
+// for install operations.
+//
+// There are two ways to create one. CreateDefaultConfig prompts on stdin and is
+// used by the CLI; interactive front-ends call NewDefaultConfig followed by
+// Save, so they can collect the install directory their own way.
 package cnfg
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/lvim-tech/clipack/utils"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
-// ConfigInit holds the initial configuration setup
-type ConfigInit struct {
-	InstallPath string
-}
+// Default registry endpoints used when a config is created from scratch.
+const (
+	DefaultRegistryURL     = "https://github.com/lvim-tech/clipack-registry.git"
+	DefaultRegistryRepoURL = "https://api.github.com/repos/lvim-tech/clipack-registry/contents"
+	DefaultBranch          = "main"
+	DefaultUpdateInterval  = 24 * time.Hour
+)
 
-// RegistryConfig holds the configuration for the registry
+// RegistryConfig holds the configuration for the registry.
 type RegistryConfig struct {
 	URL             string        `yaml:"url"`
 	RegistryRepoURL string        `yaml:"registryRepoURL"`
@@ -28,7 +37,7 @@ type RegistryConfig struct {
 	UpdateInterval  time.Duration `yaml:"update_interval"`
 }
 
-// PathsConfig holds the configuration for various paths used in the application
+// PathsConfig holds the configuration for various paths used in the application.
 type PathsConfig struct {
 	Base     string `yaml:"base"`
 	Registry string `yaml:"registry"`
@@ -38,344 +47,365 @@ type PathsConfig struct {
 	Man      string `yaml:"man"`
 }
 
-// OptionsConfig holds the configuration for various options in the application
+// OptionsConfig holds the configuration for various options in the application.
 type OptionsConfig struct {
 	AutoSymlink   bool   `yaml:"auto_symlink"`
 	BackupConfigs bool   `yaml:"backup_configs"`
 	CleanupBuild  bool   `yaml:"cleanup_build"`
-	InstallMethod string `yaml:"install_method"` // New field for install method
+	InstallMethod string `yaml:"install_method"`
 }
 
-// Config holds the entire configuration structure
+// Config holds the entire configuration structure.
 type Config struct {
 	Registry RegistryConfig `yaml:"registry"`
 	Paths    PathsConfig    `yaml:"paths"`
 	Options  OptionsConfig  `yaml:"options"`
+	Theme    Theme          `yaml:"theme"`
 }
 
-// InitConfig initializes the configuration
-func InitConfig() ConfigInit {
+// ConfigDir returns the directory holding clipack's own configuration.
+func ConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		panic(fmt.Errorf("failed to get user home directory: %w", err))
+		return "", fmt.Errorf("could not get home directory: %w", err)
 	}
+	return filepath.Join(home, ".config", "clipack"), nil
+}
 
-	configDir := filepath.Join(home, ".config", "clipack")
-	if err := os.MkdirAll(configDir, os.ModePerm); err != nil {
-		panic(fmt.Errorf("failed to create config directory: %w", err))
+// ConfigPath returns the path to config.yaml.
+func ConfigPath() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
 	}
+	return filepath.Join(dir, "config.yaml"), nil
+}
 
-	configFile := filepath.Join(configDir, "config.yaml")
-	viper.SetConfigFile(configFile)
-	viper.SetConfigType("yaml")
+// Exists reports whether a configuration file is already present.
+func Exists() bool {
+	path, err := ConfigPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
 
-	viper.SetDefault("install_path", filepath.Join(home, "clipack_apps"))
-	viper.SetDefault("options.install_method", "version") // Set default value for install_method
+// DefaultInstallDir is the suggested base directory for packages.
+func DefaultInstallDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "clipack"
+	}
+	return filepath.Join(home, "clipack")
+}
 
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		if err := viper.WriteConfigAs(configFile); err != nil {
-			panic(fmt.Errorf("failed to write config file: %w", err))
+// ExpandPath resolves ~ and makes the path absolute.
+func ExpandPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return path
+	}
+	if strings.HasPrefix(path, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 		}
-	} else {
-		if err := viper.ReadInConfig(); err != nil {
-			panic(fmt.Errorf("failed to read config file: %w", err))
-		}
 	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
 
-	return ConfigInit{
-		InstallPath: viper.GetString("install_path"),
+// NewDefaultConfig builds a configuration rooted at installDir.
+func NewDefaultConfig(installDir string) *Config {
+	installDir = ExpandPath(installDir)
+	return &Config{
+		Registry: RegistryConfig{
+			URL:             DefaultRegistryURL,
+			RegistryRepoURL: DefaultRegistryRepoURL,
+			Branch:          DefaultBranch,
+			UpdateInterval:  DefaultUpdateInterval,
+		},
+		Paths: PathsConfig{
+			Base:     installDir,
+			Registry: filepath.Join(installDir, "registry"),
+			Bin:      filepath.Join(installDir, "bin"),
+			Configs:  filepath.Join(installDir, "configs"),
+			Build:    filepath.Join(installDir, "build"),
+			Man:      filepath.Join(installDir, "man"),
+		},
+		Options: OptionsConfig{
+			AutoSymlink:   true,
+			BackupConfigs: true,
+			CleanupBuild:  true,
+			InstallMethod: "version",
+		},
+		// Written out explicitly so the knob is discoverable in the file.
+		Theme: Theme{Name: DefaultThemeName},
 	}
 }
 
-// LoadConfig loads the configuration from the config file
+// Save writes the configuration and creates the directory tree it describes.
+func (c *Config) Save() error {
+	dir, err := ConfigDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("could not create config directory: %w", err)
+	}
+
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("could not encode config: %w", err)
+	}
+
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, append([]byte("---\n"), data...), 0o644); err != nil {
+		return fmt.Errorf("could not write config file: %w", err)
+	}
+
+	return c.EnsureDirs()
+}
+
+// EnsureDirs creates every directory referenced by the configuration.
+func (c *Config) EnsureDirs() error {
+	for _, dir := range c.Dirs() {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("could not create directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// Dirs lists the managed directories.
+func (c *Config) Dirs() []string {
+	return []string{c.Paths.Registry, c.Paths.Bin, c.Paths.Configs, c.Paths.Build, c.Paths.Man}
+}
+
+// LoadConfig loads the configuration from the config file.
 func LoadConfig() (*Config, error) {
-	home, err := os.UserHomeDir()
+	path, err := ConfigPath()
 	if err != nil {
-		return nil, fmt.Errorf("could not get home directory: %v", err)
+		return nil, err
 	}
 
-	configPath := filepath.Join(home, ".config", "clipack", "config.yaml")
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("could not read config file: %v", err)
+		return nil, fmt.Errorf("could not read config file: %w", err)
 	}
 
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("could not parse config file: %v", err)
+		return nil, fmt.Errorf("could not parse config file: %w", err)
 	}
 
 	if err := validateConfig(&config); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %v", err)
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return &config, nil
 }
 
-// validateConfig validates the configuration fields
+// validateConfig fills in defaults and rejects unusable configurations.
 func validateConfig(config *Config) error {
 	if config.Registry.URL == "" {
 		return fmt.Errorf("registry URL is required")
 	}
-
 	if config.Registry.Branch == "" {
-		config.Registry.Branch = "main"
+		config.Registry.Branch = DefaultBranch
 	}
-
 	if config.Registry.UpdateInterval == 0 {
-		config.Registry.UpdateInterval = 24 * time.Hour
+		config.Registry.UpdateInterval = DefaultUpdateInterval
+	}
+	if config.Options.InstallMethod == "" {
+		config.Options.InstallMethod = "version"
 	}
 
-	paths := []string{config.Paths.Base, config.Paths.Registry, config.Paths.Bin, config.Paths.Configs, config.Paths.Build, config.Paths.Man}
-	for _, path := range paths {
-		if !filepath.IsAbs(path) {
-			return fmt.Errorf("all paths must be absolute")
+	named := map[string]string{
+		"base":     config.Paths.Base,
+		"registry": config.Paths.Registry,
+		"bin":      config.Paths.Bin,
+		"configs":  config.Paths.Configs,
+		"build":    config.Paths.Build,
+		"man":      config.Paths.Man,
+	}
+	for name, path := range named {
+		if path == "" {
+			return fmt.Errorf("path %q is not set", name)
 		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("path %q must be absolute, got %q", name, path)
+		}
+	}
+
+	if err := validateTheme(&config.Theme); err != nil {
+		return fmt.Errorf("theme: %w", err)
 	}
 
 	return nil
 }
 
-// CreateDefaultConfig creates the default configuration file if it does not exist
+// CreateDefaultConfig creates the default configuration file if it does not
+// exist, prompting on stdin. Interactive front-ends should use NewDefaultConfig
+// and Save instead.
 func CreateDefaultConfig() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("could not get home directory: %v", err)
-	}
-
-	configDir := filepath.Join(home, ".config", "clipack")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("could not create config directory: %v", err)
-	}
-
-	configPath := filepath.Join(configDir, "config.yaml")
-
-	if _, err := os.Stat(configPath); err == nil {
+	if Exists() {
 		return nil
 	}
 
 	installDir, err := AskInstallDirectory()
 	if err != nil {
-		return fmt.Errorf("could not get installation directory: %v", err)
+		return fmt.Errorf("could not get installation directory: %w", err)
 	}
 
-	config := fmt.Sprintf(`---
-registry:
-  url: https://github.com/lvim-tech/clipack-registry.git
-  registryRepoURL: https://api.github.com/repos/lvim-tech/clipack-registry/contents
-  branch: main
-  update_interval: 24h
-  # token: your-github-token # Optional: Add your GitHub token here
-
-paths:
-  base: %s
-  registry: %s
-  bin: %s
-  configs: %s
-  build: %s
-  man: %s
-
-options:
-  auto_symlink: true
-  backup_configs: true
-  cleanup_build: true
-  install_method: version
-`,
-		installDir,
-		filepath.Join(installDir, "registry"),
-		filepath.Join(installDir, "bin"),
-		filepath.Join(installDir, "configs"),
-		filepath.Join(installDir, "build"),
-		filepath.Join(installDir, "man"))
-
-	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
-		return fmt.Errorf("could not write config file: %v", err)
+	config := NewDefaultConfig(installDir)
+	if err := config.Save(); err != nil {
+		return err
 	}
 
-	dirs := []string{
-		filepath.Join(installDir, "registry"),
-		filepath.Join(installDir, "bin"),
-		filepath.Join(installDir, "configs"),
-		filepath.Join(installDir, "build"),
-		filepath.Join(installDir, "man"),
-	}
-
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("could not create directory %s: %v", dir, err)
-		}
-	}
-
-	fmt.Printf("\nConfiguration created at: %s\n", configPath)
-	fmt.Printf("Installation directory: %s\n", installDir)
+	path, _ := ConfigPath()
+	fmt.Printf("\nConfiguration created at: %s\n", path)
+	fmt.Printf("Installation directory: %s\n", config.Paths.Base)
 	fmt.Printf("\nThe following directories have been created:\n")
-	for _, dir := range dirs {
+	for _, dir := range config.Dirs() {
 		fmt.Printf("- %s\n", dir)
 	}
 
 	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
-		if err := AddPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
-			return fmt.Errorf("could not add paths to shell configuration: %v", err)
+		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man); err != nil {
+			return fmt.Errorf("could not add paths to shell configuration: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// UpdateConfig updates the configuration file
+// UpdateConfig repoints the installation directory while preserving settings
+// the user customised. The previous version rewrote the file from a hardcoded
+// template, silently discarding the registry token and every option.
 func UpdateConfig() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("could not get home directory: %v", err)
-	}
-
-	configDir := filepath.Join(home, ".config", "clipack")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("could not create config directory: %v", err)
-	}
-
-	configPath := filepath.Join(configDir, "config.yaml")
-
 	installDir, err := AskInstallDirectory()
 	if err != nil {
-		return fmt.Errorf("could not get installation directory: %v", err)
+		return fmt.Errorf("could not get installation directory: %w", err)
 	}
 
-	config := fmt.Sprintf(`---
-registry:
-  url: https://github.com/lvim-tech/clipack-registry.git
-  registryRepoURL: https://api.github.com/repos/lvim-tech/clipack-registry/contents
-  branch: main
-  update_interval: 24h
-  # token: your-github-token # Optional: Add your GitHub token here
-
-paths:
-  base: %s
-  registry: %s
-  bin: %s
-  configs: %s
-  build: %s
-  man: %s
-
-options:
-  auto_symlink: true
-  backup_configs: true
-  cleanup_build: true
-  install_method: version
-`,
-		installDir,
-		filepath.Join(installDir, "registry"),
-		filepath.Join(installDir, "bin"),
-		filepath.Join(installDir, "configs"),
-		filepath.Join(installDir, "build"),
-		filepath.Join(installDir, "man"))
-
-	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
-		return fmt.Errorf("could not write config file: %v", err)
+	config := NewDefaultConfig(installDir)
+	if existing, err := LoadConfig(); err == nil {
+		config.Registry = existing.Registry
+		config.Options = existing.Options
 	}
 
-	fmt.Printf("Configuration updated at: %s\n", configPath)
+	if err := config.Save(); err != nil {
+		return err
+	}
+
+	path, _ := ConfigPath()
+	fmt.Printf("Configuration updated at: %s\n", path)
 
 	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
-		if err := AddPathsToShellConfig(filepath.Join(installDir, "bin"), filepath.Join(installDir, "man")); err != nil {
-			return fmt.Errorf("could not add paths to shell configuration: %v", err)
+		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man); err != nil {
+			return fmt.Errorf("could not add paths to shell configuration: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// GetCurrentUserAndTime returns the current user and time
-func GetCurrentUserAndTime() (string, string) {
-	currentTime := "2025-03-02 18:16:07"
-	currentUser := "bojanbb"
-	return currentUser, currentTime
-}
-
-// AskInstallDirectory prompts the user to input the installation directory
+// AskInstallDirectory prompts the user to input the installation directory.
+// It shares utils' stdin reader so a following confirmation prompt still sees
+// its own answer when input is piped in.
 func AskInstallDirectory() (string, error) {
-	reader := bufio.NewReader(os.Stdin)
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	defaultDir := filepath.Join(home, "clipack")
+	defaultDir := DefaultInstallDir()
 
 	fmt.Printf("\nWhere would you like to install clipack packages?\n")
 	fmt.Printf("Default: %s\n", defaultDir)
 	fmt.Printf("Enter path (or press Enter for default): ")
 
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("error reading input: %v", err)
+	input, err := utils.ReadLine()
+	if err != nil && input == "" {
+		return "", fmt.Errorf("error reading input: %w", err)
 	}
 
 	installDir := strings.TrimSpace(input)
-
 	if installDir == "" {
 		installDir = defaultDir
 	}
 
-	if strings.HasPrefix(installDir, "~/") {
-		installDir = filepath.Join(home, installDir[2:])
-	}
-
-	return installDir, nil
+	return ExpandPath(installDir), nil
 }
 
-// AddPathsToShellConfig adds the bin and man paths to the shell configuration file
+// ShellExportLines returns the lines that put bin and man on the shell's path.
+func ShellExportLines(binPath, manPath string) (string, error) {
+	switch filepath.Base(os.Getenv("SHELL")) {
+	case "bash", "zsh":
+		return fmt.Sprintf("\nexport PATH=\"%s:$PATH\"\nexport MANPATH=\"%s:$MANPATH\"\n", binPath, manPath), nil
+	case "fish":
+		return fmt.Sprintf("\nset -x PATH %s $PATH\nset -x MANPATH %s $MANPATH\n", binPath, manPath), nil
+	default:
+		return "", fmt.Errorf("unsupported shell: %s", os.Getenv("SHELL"))
+	}
+}
+
+// AddPathsToShellConfig appends the bin and man paths to the shell rc file.
+// It is a no-op when the lines are already present, so running it repeatedly
+// no longer stacks duplicate exports.
 func AddPathsToShellConfig(binPath, manPath string) error {
 	configFilePath, err := GetShellConfigFilePath()
 	if err != nil {
-		return fmt.Errorf("could not determine shell config file path: %v", err)
+		return fmt.Errorf("could not determine shell config file path: %w", err)
 	}
 
-	configFile, err := os.OpenFile(configFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	lines, err := ShellExportLines(binPath, manPath)
 	if err != nil {
-		return fmt.Errorf("could not open shell config file: %v", err)
+		return err
+	}
+
+	if existing, err := os.ReadFile(configFilePath); err == nil {
+		if strings.Contains(string(existing), binPath) {
+			fmt.Printf("%s already references %s, nothing to do\n", configFilePath, binPath)
+			return nil
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configFilePath), 0o755); err != nil {
+		return fmt.Errorf("could not create shell config directory: %w", err)
+	}
+
+	configFile, err := os.OpenFile(configFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return fmt.Errorf("could not open shell config file: %w", err)
 	}
 	defer configFile.Close()
 
-	shell := filepath.Base(os.Getenv("SHELL"))
-
-	switch shell {
-	case "bash", "zsh":
-		if _, err := configFile.WriteString(fmt.Sprintf("\nexport PATH=\"%s:$PATH\"\nexport MANPATH=\"%s:$MANPATH\"\n", binPath, manPath)); err != nil {
-			return fmt.Errorf("could not write to shell config file: %v", err)
-		}
-	case "fish":
-		if _, err := configFile.WriteString(fmt.Sprintf("\nset -x PATH %s $PATH\nset -x MANPATH %s $MANPATH\n", binPath, manPath)); err != nil {
-			return fmt.Errorf("could not write to shell config file: %v", err)
-		}
-	default:
-		return fmt.Errorf("unsupported shell: %s", shell)
+	if _, err := configFile.WriteString(lines); err != nil {
+		return fmt.Errorf("could not write to shell config file: %w", err)
 	}
 
 	fmt.Printf("Paths added to %s\n", configFilePath)
 	return nil
 }
 
-// GetShellConfigFilePath returns the path to the shell configuration file
+// GetShellConfigFilePath returns the path to the shell configuration file.
+//
+// The home directory comes from os.UserHomeDir rather than os/user, so the rc
+// file and the configuration in ConfigDir always agree on where "home" is —
+// they used to disagree whenever $HOME differed from the passwd entry.
 func GetShellConfigFilePath() (string, error) {
-	usr, err := user.Current()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("could not get current user: %v", err)
+		return "", fmt.Errorf("could not get home directory: %w", err)
 	}
 
-	shell := filepath.Base(os.Getenv("SHELL"))
-
-	var configFilePath string
-	switch shell {
+	switch filepath.Base(os.Getenv("SHELL")) {
 	case "bash":
-		configFilePath = filepath.Join(usr.HomeDir, ".bashrc")
+		return filepath.Join(home, ".bashrc"), nil
 	case "zsh":
-		configFilePath = filepath.Join(usr.HomeDir, ".zshrc")
+		return filepath.Join(home, ".zshrc"), nil
 	case "fish":
-		configFilePath = filepath.Join(usr.HomeDir, ".config", "fish", "config.fish")
+		return filepath.Join(home, ".config", "fish", "config.fish"), nil
 	default:
-		return "", fmt.Errorf("unsupported shell: %s", shell)
+		return "", fmt.Errorf("unsupported shell: %s", os.Getenv("SHELL"))
 	}
-
-	return configFilePath, nil
 }

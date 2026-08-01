@@ -1,13 +1,32 @@
+// Command check_registry refreshes the version and commit of every package in
+// the registry, then commits and pushes the result.
+//
+// It is run daily by .github/workflows/check-registry.yml, which clones
+// clipack-registry into ./registry and passes a GitHub token as the only
+// argument.
+//
+// Two properties matter more than they look:
+//
+//   - Package files are edited LINE BY LINE, not unmarshalled and marshalled
+//     back. A round trip through a Go struct silently drops every field the
+//     struct does not declare — which is how install.man, install.environment
+//     and post-install would disappear the first time their package saw a new
+//     release. It also destroys comments.
+//
+//   - A failure is a failure. An earlier version logged API errors and carried
+//     on, so an expired token produced "No updates found" and exit 0. The
+//     registry then sat unchanged for eight months while every scheduled run
+//     reported success.
 package main
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,159 +35,214 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// registryDir is where the workflow clones clipack-registry.
+const registryDir = "registry"
+
+// Index is the registry's list of package files.
 type Index struct {
 	Packages []string `yaml:"packages"`
 }
 
+// Package is only ever used for READING. Writing goes through replaceField, so
+// a field missing here cannot be lost.
 type Package struct {
-	Name        string   `yaml:"name"`
-	Version     string   `yaml:"version"`
-	Commit      string   `yaml:"commit"`
-	Description string   `yaml:"description"`
-	Homepage    string   `yaml:"homepage"`
-	License     string   `yaml:"license"`
-	Maintainer  string   `yaml:"maintainer"`
-	UpdatedAt   string   `yaml:"updated_at"`
-	Tags        []string `yaml:"tags"`
-	Install     struct {
-		Source struct {
-			Type string `yaml:"type"`
-			URL  string `yaml:"url"`
-			Ref  string `yaml:"ref"`
-		} `yaml:"source"`
-		Steps            []string `yaml:"steps"`
-		Binaries         []string `yaml:"binaries"`
-		AdditionalConfig []struct {
-			Filename string `yaml:"filename"`
-			Content  string `yaml:"content"`
-		} `yaml:"additional-config"`
-	} `yaml:"install"`
-}
-
-func checkForNewVersionAndCommit(client *github.Client, pkg *Package) (string, string, error) {
-	ownerRepo := strings.TrimPrefix(pkg.Homepage, "https://github.com/")
-	ownerRepo = strings.TrimSuffix(ownerRepo, ".git")
-	parts := strings.Split(ownerRepo, "/")
-	if len(parts) != 2 {
-		return pkg.Version, pkg.Commit, fmt.Errorf("invalid repository URL: %s", pkg.Homepage)
-	}
-	owner, repo := parts[0], parts[1]
-
-	// Check for the latest release
-	release, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
-	if err != nil {
-		// If there is no release, fall back to getting the latest tag
-		tags, _, err := client.Repositories.ListTags(context.Background(), owner, repo, nil)
-		if err != nil || len(tags) == 0 {
-			return pkg.Version, pkg.Commit, fmt.Errorf("error getting latest release or tag: %v", err)
-		}
-		newVersion := tags[0].GetName()
-		// Check for the latest commit
-		commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)
-		if err != nil {
-			return pkg.Version, pkg.Commit, fmt.Errorf("error getting commits: %v", err)
-		}
-		newCommit := commits[0].GetSHA()
-		return newVersion, newCommit, nil
-	}
-	newVersion := release.GetTagName()
-
-	// Check for the latest commit
-	commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, nil)
-	if err != nil {
-		return pkg.Version, pkg.Commit, fmt.Errorf("error getting commits: %v", err)
-	}
-	newCommit := commits[0].GetSHA()
-
-	return newVersion, newCommit, nil
+	Name     string `yaml:"name"`
+	Version  string `yaml:"version"`
+	Commit   string `yaml:"commit"`
+	Homepage string `yaml:"homepage"`
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatalf("Usage: %s <token>", os.Args[0])
+	if len(os.Args) < 2 || os.Args[1] == "" {
+		log.Fatal("usage: check_registry <github-token>")
 	}
-	token := os.Args[1]
 
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	client := github.NewClient(tc)
+	client := github.NewClient(oauth2.NewClient(ctx,
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Args[1]})))
 
-	indexData, err := ioutil.ReadFile(filepath.Join("registry", "index.yaml"))
+	// Fail before touching anything if the token is not usable. The absence of
+	// this check is what hid an expired token for eight months.
+	if _, _, err := client.Users.Get(ctx, ""); err != nil {
+		log.Fatalf("the GitHub token is not usable: %v", err)
+	}
+
+	index, err := readIndex()
 	if err != nil {
-		log.Fatalf("Error reading index.yaml: %v", err)
+		log.Fatal(err)
+	}
+
+	var updated, failed []string
+	for _, rel := range index.Packages {
+		changed, err := updatePackage(ctx, client, rel)
+		switch {
+		case err != nil:
+			log.Printf("%s: %v", rel, err)
+			failed = append(failed, rel)
+		case changed:
+			updated = append(updated, rel)
+		}
+	}
+
+	if len(updated) > 0 {
+		if err := commitAndPush(updated); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("updated %d package(s): %s\n", len(updated), strings.Join(updated, ", "))
+	} else {
+		fmt.Println("no updates found")
+	}
+
+	// A partial run is reported as a failure, so the workflow goes red instead
+	// of quietly falling behind.
+	if len(failed) > 0 {
+		log.Fatalf("%d package(s) could not be checked: %s",
+			len(failed), strings.Join(failed, ", "))
+	}
+}
+
+// readIndex loads the registry's package list.
+func readIndex() (Index, error) {
+	data, err := os.ReadFile(filepath.Join(registryDir, "index.yaml"))
+	if err != nil {
+		return Index{}, fmt.Errorf("reading index.yaml: %w", err)
 	}
 
 	var index Index
-	err = yaml.Unmarshal(indexData, &index)
+	if err := yaml.Unmarshal(data, &index); err != nil {
+		return Index{}, fmt.Errorf("parsing index.yaml: %w", err)
+	}
+	if len(index.Packages) == 0 {
+		return Index{}, fmt.Errorf("index.yaml lists no packages")
+	}
+	return index, nil
+}
+
+// updatePackage refreshes one package file, reporting whether it changed.
+func updatePackage(ctx context.Context, client *github.Client, rel string) (bool, error) {
+	path := filepath.Join(registryDir, rel)
+
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("Error unmarshalling index.yaml: %v", err)
+		return false, fmt.Errorf("reading: %w", err)
 	}
 
-	updated := false
-
-	for _, file := range index.Packages {
-		filePath := filepath.Join("registry", file)
-		data, err := ioutil.ReadFile(filePath)
-		if err != nil {
-			log.Fatalf("Error reading file %s: %v", filePath, err)
-		}
-
-		var pkg Package
-		err = yaml.Unmarshal(data, &pkg)
-		if err != nil {
-			log.Fatalf("Error unmarshalling YAML for file %s: %v", filePath, err)
-		}
-
-		newVersion, newCommit, err := checkForNewVersionAndCommit(client, &pkg)
-		if err != nil {
-			log.Printf("Error checking for new version and commit for %s: %v", pkg.Name, err)
-			continue
-		}
-
-		if newVersion != pkg.Version || newCommit != pkg.Commit {
-			pkg.Version = newVersion
-			pkg.Commit = newCommit
-			pkg.UpdatedAt = time.Now().Format(time.RFC3339)
-			updated = true
-
-			data, err = yaml.Marshal(&pkg)
-			if err != nil {
-				log.Fatalf("Error marshalling YAML for file %s: %v", filePath, err)
-			}
-
-			err = ioutil.WriteFile(filePath, data, 0644)
-			if err != nil {
-				log.Fatalf("Error writing file %s: %v", filePath, err)
-			}
-		}
+	var pkg Package
+	if err := yaml.Unmarshal(raw, &pkg); err != nil {
+		return false, fmt.Errorf("parsing: %w", err)
 	}
 
-	if updated {
-		cmd := exec.Command("git", "add", ".")
-		cmd.Dir = "registry"
-		err := cmd.Run()
-		if err != nil {
-			log.Fatalf("Error adding changes to git: %v", err)
-		}
+	owner, repo, err := splitRepo(pkg.Homepage)
+	if err != nil {
+		return false, err
+	}
 
-		commitMessage := fmt.Sprintf("Last registry update: %s", time.Now().Format(time.RFC3339))
-		cmd = exec.Command("git", "commit", "-m", commitMessage)
-		cmd.Dir = "registry"
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Fatalf("Error committing changes to git: %v, output: %s", err, output)
-		}
+	version, commit, err := latestRefs(ctx, client, owner, repo, pkg.Version)
+	if err != nil {
+		return false, err
+	}
+	if version == pkg.Version && commit == pkg.Commit {
+		return false, nil
+	}
 
-		cmd = exec.Command("git", "push")
-		cmd.Dir = "registry"
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			log.Fatalf("Error pushing changes to git: %v, output: %s", err, output)
-		}
+	out := string(raw)
+	if out, err = replaceField(out, "version", version); err != nil {
+		return false, err
+	}
+	if out, err = replaceField(out, "commit", commit); err != nil {
+		return false, err
+	}
+	if out, err = replaceField(out, "updated_at", quoted(time.Now().UTC().Format(time.RFC3339))); err != nil {
+		return false, err
+	}
+
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		return false, fmt.Errorf("writing: %w", err)
+	}
+	return true, nil
+}
+
+// latestRefs returns the newest release tag and the head of the default branch.
+//
+// version is the tag a stable install checks out; commit is what the "commit"
+// install method follows, so it is deliberately ahead of the release.
+func latestRefs(ctx context.Context, client *github.Client, owner, repo, current string) (string, string, error) {
+	version := current
+
+	release, _, err := client.Repositories.GetLatestRelease(ctx, owner, repo)
+	if err == nil {
+		version = release.GetTagName()
 	} else {
-		fmt.Println("No updates found.")
+		// Projects that tag without publishing releases still need a version.
+		tags, _, tagErr := client.Repositories.ListTags(ctx, owner, repo, nil)
+		if tagErr != nil {
+			return "", "", fmt.Errorf("no release and no tags: %v / %v", err, tagErr)
+		}
+		if len(tags) > 0 {
+			version = tags[0].GetName()
+		}
 	}
+
+	commits, _, err := client.Repositories.ListCommits(ctx, owner, repo,
+		&github.CommitsListOptions{ListOptions: github.ListOptions{PerPage: 1}})
+	if err != nil {
+		return "", "", fmt.Errorf("listing commits: %w", err)
+	}
+	if len(commits) == 0 {
+		return "", "", fmt.Errorf("repository has no commits")
+	}
+
+	return version, commits[0].GetSHA(), nil
+}
+
+// splitRepo pulls owner and repository out of a GitHub URL.
+func splitRepo(homepage string) (string, string, error) {
+	trimmed := strings.TrimSuffix(strings.TrimSuffix(homepage, "/"), ".git")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 2 || parts[len(parts)-1] == "" {
+		return "", "", fmt.Errorf("cannot read owner/repo from homepage %q", homepage)
+	}
+	return parts[len(parts)-2], parts[len(parts)-1], nil
+}
+
+// replaceField rewrites one top-level scalar in place, leaving every other byte
+// of the file — comments included, and fields this program knows nothing about
+// — exactly as it was.
+func replaceField(doc, field, value string) (string, error) {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(field) + `:.*$`)
+	if !re.MatchString(doc) {
+		return "", fmt.Errorf("no top-level %q field to update", field)
+	}
+	return re.ReplaceAllLiteralString(doc, field+": "+value), nil
+}
+
+// quoted wraps a timestamp so YAML keeps it a string.
+func quoted(s string) string { return `"` + s + `"` }
+
+// commitAndPush records the refreshed files in the registry repository.
+func commitAndPush(updated []string) error {
+	message := fmt.Sprintf("Update %d package(s): %s",
+		len(updated), strings.Join(shortNames(updated), ", "))
+
+	for _, args := range [][]string{
+		{"add", "."},
+		{"commit", "-m", message},
+		{"push"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = registryDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %s: %v: %s", args[0], err, out)
+		}
+	}
+	return nil
+}
+
+// shortNames turns package paths into bare names for the commit subject.
+func shortNames(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = strings.TrimSuffix(filepath.Base(p), ".yaml")
+	}
+	return out
 }

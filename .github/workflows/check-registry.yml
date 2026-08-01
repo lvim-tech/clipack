@@ -12,9 +12,11 @@ jobs:
       - name: Checkout application repository
         uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v4
+        # Read from go.mod so a toolchain bump here cannot silently break the
+        # scheduled run.
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: go.mod
       - name: Install dependencies
         run: go mod download
       - name: Clone registry repository

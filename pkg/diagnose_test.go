@@ -321,3 +321,56 @@ func TestDiagnosePkgConfigThirdWording(t *testing.T) {
 		t.Errorf("cause = %q, want it to name libxxhash", got[0].Cause)
 	}
 }
+
+// Both of these stopped a real kitty build, and neither produced a hint before
+// this matcher existed: the older "No such file or directory" rule deliberately
+// ignores anything with a path separator in it, which every header has.
+func TestDiagnoseMissingHeader(t *testing.T) {
+	tests := []struct {
+		name    string
+		output  string
+		wantIn  string
+		wantFix string
+	}{
+		{
+			name:    "xkbcommon",
+			output:  "kitty/keys.c:15:10: fatal error: xkbcommon/xkbcommon.h: No such file or directory",
+			wantIn:  "xkbcommon/xkbcommon.h",
+			wantFix: "xkbcommon-devel",
+		},
+		{
+			name:    "simde",
+			output:  "kitty/simd-string-impl.h:36:10: fatal error: simde/x86/avx2.h: No such file or directory",
+			wantIn:  "simde/x86/avx2.h",
+			wantFix: "simde-devel",
+		},
+		{
+			// No directory component: the library name comes from the stem.
+			name:    "bare header",
+			output:  "foo.c:1:10: fatal error: zstd.h: No such file or directory",
+			wantIn:  "zstd.h",
+			wantFix: "zstd-devel",
+		},
+		{
+			name:    "c++ header",
+			output:  "a.cpp:3:10: fatal error: fmt/core.hpp: No such file or directory",
+			wantIn:  "fmt/core.hpp",
+			wantFix: "fmt-devel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Diagnose(strings.Split(tt.output, "\n"))
+			if len(got) == 0 {
+				t.Fatalf("no diagnosis for %q", tt.output)
+			}
+			if !strings.Contains(got[0].Cause, tt.wantIn) {
+				t.Errorf("cause = %q, want it to name %q", got[0].Cause, tt.wantIn)
+			}
+			if !strings.Contains(got[0].Fix, tt.wantFix) {
+				t.Errorf("fix = %q, want it to suggest %q", got[0].Fix, tt.wantFix)
+			}
+		})
+	}
+}

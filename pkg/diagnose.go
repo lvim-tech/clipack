@@ -102,6 +102,30 @@ var matchers = []matcher{
 		},
 	},
 	{
+		// A C compiler naming the header it could not find. This is the single
+		// most common way a from-source build stops on a fresh machine, and the
+		// header path is a better search term than the package name: the same
+		// header lives in xxhash-devel on one distro and libxxhash-dev on
+		// another, but `simde/x86/avx2.h` identifies it either way.
+		re: regexp.MustCompile(`fatal error: ([\w./+-]+\.h(?:pp)?): No such file or directory`),
+		diagnose: func(m []string) Diagnosis {
+			header := m[1]
+			// The first path segment is usually the library: "simde/x86/avx2.h"
+			// -> simde, "xkbcommon/xkbcommon.h" -> xkbcommon.
+			lib := header
+			if i := strings.IndexByte(lib, '/'); i > 0 {
+				lib = lib[:i]
+			} else {
+				lib = strings.TrimSuffix(strings.TrimSuffix(lib, ".hpp"), ".h")
+			}
+			return Diagnosis{
+				Cause: fmt.Sprintf("the build needs the header %s, which is not installed", header),
+				Fix: fmt.Sprintf("install the development package that provides it — usually %s-devel or lib%s-dev; "+
+					"`zypper se --provides '*/%s'` or your distro's equivalent will name it", lib, lib, header),
+			}
+		},
+	},
+	{
 		re: regexp.MustCompile(`cannot find -l(\S+)`),
 		diagnose: func(m []string) Diagnosis {
 			return Diagnosis{

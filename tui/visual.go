@@ -100,6 +100,10 @@ func (b detailBuffer) clamp(p pos) pos {
 
 // selectionRange normalises the cursor and anchor into an ordered pair.
 // ok is false when nothing is selected.
+//
+// This and everything below it work on `activeBuf`, not on the detail pane
+// specifically: the run screen's build log gets the same selection, the same
+// motions and the same yank, from this one implementation.
 func (m Model) selectionRange() (start, end pos, ok bool) {
 	if m.visual == visualNone {
 		return pos{}, pos{}, false
@@ -111,7 +115,7 @@ func (m Model) selectionRange() (start, end pos, ok bool) {
 	}
 	if m.visual == visualLine {
 		start.col = 0
-		end.col = m.detailBuf.lineLen(end.line)
+		end.col = m.activeBuf().lineLen(end.line)
 	}
 	return start, end, true
 }
@@ -120,16 +124,17 @@ func (m Model) selectionRange() (start, end pos, ok bool) {
 // mode active it returns the cursor line, which is what `y` yanks then — the
 // same shorthand vi spells `yy`.
 func (m Model) selectedText() string {
+	buf := m.activeBuf()
 	start, end, ok := m.selectionRange()
 	if !ok {
-		line := m.detailBuf.runes(m.cursor.line)
+		line := buf.runes(m.cursor.line)
 		return strings.TrimRight(string(line), " ")
 	}
 
 	if m.visual == visualLine {
 		var out []string
-		for i := start.line; i <= end.line && i < m.detailBuf.lines(); i++ {
-			out = append(out, strings.TrimRight(m.detailBuf.plain[i], " "))
+		for i := start.line; i <= end.line && i < buf.lines(); i++ {
+			out = append(out, strings.TrimRight(buf.plain[i], " "))
 		}
 		return strings.Join(out, "\n")
 	}
@@ -137,17 +142,17 @@ func (m Model) selectedText() string {
 	// Character-wise: the first and last lines are partial, everything between
 	// them is whole. The end column is inclusive, as in vi.
 	if start.line == end.line {
-		line := m.detailBuf.runes(start.line)
+		line := buf.runes(start.line)
 		return string(sliceRunes(line, start.col, end.col+1))
 	}
 
 	var out []string
-	first := m.detailBuf.runes(start.line)
+	first := buf.runes(start.line)
 	out = append(out, string(sliceRunes(first, start.col, len(first))))
 	for i := start.line + 1; i < end.line; i++ {
-		out = append(out, m.detailBuf.plain[i])
+		out = append(out, buf.plain[i])
 	}
-	last := m.detailBuf.runes(end.line)
+	last := buf.runes(end.line)
 	out = append(out, string(sliceRunes(last, 0, end.col+1)))
 
 	return strings.Join(out, "\n")
@@ -172,13 +177,13 @@ func sliceRunes(r []rune, from, to int) []rune {
 // block, and keeping the original colouring underneath it would fight the
 // highlight rather than help.
 func (m Model) renderDetailBuffer() string {
-	b := m.detailBuf
+	b := m.activeBuf()
 	if b.lines() == 0 {
 		return ""
 	}
 
 	start, end, selecting := m.selectionRange()
-	showCursor := m.focus == focusDetail
+	showCursor := m.screen == screenRun || m.focus == focusDetail
 
 	out := make([]string, b.lines())
 	for i, styled := range b.styled {
@@ -197,7 +202,7 @@ func (m Model) renderDetailBuffer() string {
 
 // renderSelectedLine draws the selected span of one line.
 func (m Model) renderSelectedLine(i int, start, end pos) string {
-	line := m.detailBuf.runes(i)
+	line := m.activeBuf().runes(i)
 
 	from, to := 0, len(line)
 	if m.visual == visualChar {
@@ -226,7 +231,7 @@ func (m Model) renderSelectedLine(i int, start, end pos) string {
 
 // renderCursorLine draws the block cursor over a single character.
 func (m Model) renderCursorLine(i int) string {
-	line := m.detailBuf.runes(i)
+	line := m.activeBuf().runes(i)
 	col := m.cursor.col
 
 	if col >= len(line) {

@@ -171,9 +171,12 @@ type Model struct {
 
 	// Detail pane text cursor and vi-style selection.
 	detailBuf detailBuffer
-	cursor    pos
-	anchor    pos
-	visual    visualMode
+	// logBuf is the build log, addressable line by line so the same selection
+	// code that serves the detail pane can serve the run screen.
+	logBuf detailBuffer
+	cursor pos
+	anchor pos
+	visual visualMode
 
 	// Chrome.
 	width, height int
@@ -542,24 +545,46 @@ func (m *Model) syncDetail() {
 	m.detail.SetContent(m.renderDetailBuffer())
 }
 
+// activeBuf is the buffer the selection applies to: the build log while an
+// operation's output is on screen, the detail pane otherwise.
+func (m Model) activeBuf() detailBuffer {
+	if m.screen == screenRun {
+		return m.logBuf
+	}
+	return m.detailBuf
+}
+
+// syncActive redraws whichever pane the selection is currently in.
+func (m *Model) syncActive() {
+	if m.screen == screenRun {
+		m.logView.SetContent(m.renderDetailBuffer())
+		return
+	}
+	m.syncDetail()
+}
+
 // moveCursor moves the text cursor, keeps it inside the buffer and scrolls the
 // pane to follow it.
 func (m *Model) moveCursor(p pos) {
-	m.cursor = m.detailBuf.clamp(p)
+	m.cursor = m.activeBuf().clamp(p)
 	m.ensureCursorVisible()
-	m.syncDetail()
+	m.syncActive()
 }
 
 // ensureCursorVisible scrolls the viewport just enough to show the cursor line.
 func (m *Model) ensureCursorVisible() {
-	if m.detail.Height <= 0 {
+	view := &m.detail
+	if m.screen == screenRun {
+		view = &m.logView
+	}
+	if view.Height <= 0 {
 		return
 	}
 	switch {
-	case m.cursor.line < m.detail.YOffset:
-		m.detail.SetYOffset(m.cursor.line)
-	case m.cursor.line >= m.detail.YOffset+m.detail.Height:
-		m.detail.SetYOffset(m.cursor.line - m.detail.Height + 1)
+	case m.cursor.line < view.YOffset:
+		view.SetYOffset(m.cursor.line)
+	case m.cursor.line >= view.YOffset+view.Height:
+		view.SetYOffset(m.cursor.line - view.Height + 1)
 	}
 }
 
@@ -912,11 +937,11 @@ func (m Model) updateDetailPane(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	case "0", "home":
 		m.moveCursor(pos{m.cursor.line, 0})
 	case "$", "end":
-		m.moveCursor(pos{m.cursor.line, m.detailBuf.lineLen(m.cursor.line) - 1})
+		m.moveCursor(pos{m.cursor.line, m.activeBuf().lineLen(m.cursor.line) - 1})
 	case "g":
 		m.moveCursor(pos{0, 0})
 	case "G":
-		m.moveCursor(pos{m.detailBuf.lines() - 1, 0})
+		m.moveCursor(pos{m.activeBuf().lines() - 1, 0})
 	case "ctrl+d":
 		m.moveCursor(pos{m.cursor.line + page/2, m.cursor.col})
 	case "ctrl+u":
@@ -964,7 +989,7 @@ func (m Model) yank() (Model, tea.Cmd, bool) {
 	mode := m.visual
 
 	m.visual = visualNone
-	m.syncDetail()
+	m.syncActive()
 
 	if text == "" {
 		m.status = "Nothing to copy"
@@ -1307,6 +1332,14 @@ func (m *Model) syncLog() {
 		width = 10
 	}
 	wrapped := lipgloss.NewStyle().Width(width).Render(strings.Join(m.logLines, "\n"))
+	m.logBuf = newDetailBuffer(wrapped)
+
+	// While text is being selected the view must not jump: new output would
+	// otherwise scroll the selection out from under the cursor mid-drag.
+	if m.visual != visualNone {
+		m.logView.SetContent(m.renderDetailBuffer())
+		return
+	}
 	m.logView.SetContent(wrapped)
 	m.logView.GotoBottom()
 }
@@ -1334,24 +1367,132 @@ func (m Model) handleOpFinished(msg opFinishedMsg) (tea.Model, tea.Cmd) {
 
 // updateRun handles the streaming log screen.
 func (m Model) updateRun(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch keyMsg.String() {
-		case "esc", "q", "enter":
-			// Refuse to leave while the operation is still writing output;
-			// otherwise the log would keep growing behind the browse screen.
-			if !m.runDone {
-				m.status = "Operation still running…"
-				return m, nil
-			}
-			m.screen = screenBrowse
-			m.status = m.runSummary()
+	keyMsg, isKey := msg.(tea.KeyMsg)
+	if !isKey {
+		var cmd tea.Cmd
+		m.logView, cmd = m.logView.Update(msg)
+		return m, cmd
+	}
+
+	// Held keys and pasted text arrive as one multi-rune message; motions have
+	// to see them one at a time. Same reason as in the detail pane.
+	if keyMsg.Type == tea.KeyRunes && !keyMsg.Alt && len(keyMsg.Runes) > 1 {
+		var out tea.Model = m
+		for _, r := range keyMsg.Runes {
+			out, _ = out.(Model).updateRun(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		}
+		return out, nil
+	}
+
+	page := m.logView.Height
+	if page < 1 {
+		page = 1
+	}
+
+	switch keyMsg.String() {
+	// --- selection ---
+	//
+	// The build log is the one thing a user needs to hand to someone else when
+	// an install fails, and until now it could only be photographed. `y` with
+	// nothing selected takes the WHOLE log, because that is the case that
+	// matters; v and V are there for when only part of it is wanted.
+	case "y":
+		if m.visual == visualNone {
+			return m.yankWholeLog()
+		}
+		next, cmd, _ := m.yank()
+		return next, cmd
+	case "v":
+		m.visual = toggleVisual(m.visual, visualChar)
+		m.anchor = m.cursor
+		m.status = visualStatus(m.visual)
+		m.syncActive()
+		return m, nil
+	case "V":
+		m.visual = toggleVisual(m.visual, visualLine)
+		m.anchor = m.cursor
+		m.status = visualStatus(m.visual)
+		m.syncActive()
+		return m, nil
+
+	// --- motions ---
+	case "j":
+		m.moveCursor(pos{m.cursor.line + 1, m.cursor.col})
+		return m, nil
+	case "k":
+		m.moveCursor(pos{m.cursor.line - 1, m.cursor.col})
+		return m, nil
+	case "l":
+		m.moveCursor(pos{m.cursor.line, m.cursor.col + 1})
+		return m, nil
+	case "h":
+		m.moveCursor(pos{m.cursor.line, m.cursor.col - 1})
+		return m, nil
+	case "0", "home":
+		m.moveCursor(pos{m.cursor.line, 0})
+		return m, nil
+	case "$", "end":
+		m.moveCursor(pos{m.cursor.line, m.activeBuf().lineLen(m.cursor.line) - 1})
+		return m, nil
+	case "g":
+		m.moveCursor(pos{0, 0})
+		return m, nil
+	case "G":
+		m.moveCursor(pos{m.activeBuf().lines() - 1, 0})
+		return m, nil
+	case "ctrl+d":
+		m.moveCursor(pos{m.cursor.line + page/2, m.cursor.col})
+		return m, nil
+	case "ctrl+u":
+		m.moveCursor(pos{m.cursor.line - page/2, m.cursor.col})
+		return m, nil
+
+	case "esc", "q", "enter":
+		// esc cancels a selection before it leaves the screen, so an accidental
+		// selection does not also throw away the log.
+		if keyMsg.String() == "esc" && m.visual != visualNone {
+			m.visual = visualNone
+			m.status = ""
+			m.syncActive()
 			return m, nil
 		}
+		// Refuse to leave while the operation is still writing output;
+		// otherwise the log would keep growing behind the browse screen.
+		if !m.runDone {
+			m.status = "Operation still running…"
+			return m, nil
+		}
+		m.visual = visualNone
+		m.screen = screenBrowse
+		m.status = m.runSummary()
+		return m, nil
 	}
 
 	var cmd tea.Cmd
 	m.logView, cmd = m.logView.Update(msg)
 	return m, cmd
+}
+
+// yankWholeLog copies the entire build log, which is what someone reporting a
+// failed install actually needs. It takes the plain text rather than what is on
+// screen, so the copy carries no escape sequences.
+func (m Model) yankWholeLog() (tea.Model, tea.Cmd) {
+	lines := make([]string, 0, m.logBuf.lines())
+	for _, line := range m.logBuf.plain {
+		lines = append(lines, strings.TrimRight(line, " "))
+	}
+	text := strings.TrimRight(strings.Join(lines, "\n"), "\n")
+
+	if text == "" {
+		m.status = "Nothing to copy"
+		return m, nil
+	}
+	if err := copyToClipboard(text); err != nil {
+		m.status = "Copy failed: " + err.Error()
+		return m, nil
+	}
+	m.status = fmt.Sprintf("Copied the whole log (%d lines)", len(lines))
+	return m, nil
 }
 
 // runSummary describes the finished operation for the status line.

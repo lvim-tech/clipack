@@ -421,10 +421,15 @@ func (m Model) viewRun() string {
 		indicator = s.OK.Render(fmt.Sprintf("%s %s of %s finished", s.Icons.Done, verb, m.runTarget))
 	}
 
-	hint := s.Muted.Render("↑/↓ scroll")
-	if m.runDone {
-		hint = s.Muted.Render(m.hint("↑/↓ scroll", "esc back to list"))
+	// The keys are worth spelling out here: a failed build is exactly when
+	// someone wants the text, and a copy key nobody knows about is no key.
+	parts := []string{"↑/↓ scroll", "y copy all", "v/V select"}
+	if m.visual != visualNone {
+		parts = []string{"hjkl move", "y copy selection", "esc cancel"}
+	} else if m.runDone {
+		parts = append(parts, "esc back to list")
 	}
+	hint := s.Muted.Render(m.hint(parts...))
 
 	clip := m.clipStyle()
 

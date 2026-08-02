@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -423,5 +424,140 @@ func TestSwitchingPackageClearsTheSelection(t *testing.T) {
 	}
 	if m.cursor != (pos{}) {
 		t.Errorf("cursor = %v, want it reset for the new buffer", m.cursor)
+	}
+}
+
+// runModel is a model sitting on the run screen with a finished build log,
+// which is the state a user is in when they want to copy a failure.
+func runModel(t *testing.T, lines ...string) Model {
+	t.Helper()
+
+	m := NewWithStyles(nil, DefaultStyles(), nil)
+	m.screen = screenRun
+	m.runDone = true
+	m.logView.Width, m.logView.Height = 80, 10
+	m.logLines = lines
+	m.syncLog()
+	return m
+}
+
+func TestRunScreenSelectionUsesTheLogBuffer(t *testing.T) {
+	m := runModel(t, "first line", "second line", "third line")
+
+	// The selection code reads whichever pane is on screen; on screenRun that
+	// has to be the log, not the detail pane.
+	if got := m.activeBuf().lines(); got < 3 {
+		t.Fatalf("activeBuf() has %d lines, want at least 3", got)
+	}
+	if !strings.Contains(strings.Join(m.activeBuf().plain, "\n"), "second line") {
+		t.Error("the log buffer does not contain the log")
+	}
+}
+
+func TestRunScreenYankCopiesTheWholeLog(t *testing.T) {
+	m := runModel(t, "step 1 ok", "step 2 failed", "exit status 1")
+
+	next, _ := m.updateRun(keyMsg("y"))
+	got := next.(Model)
+
+	if !strings.Contains(got.status, "whole log") {
+		t.Errorf("status = %q, want it to report the whole log was copied", got.status)
+	}
+	// 3 lines of input, so the summary must count them rather than say "1".
+	if !strings.Contains(got.status, "3 lines") {
+		t.Errorf("status = %q, want a line count of 3", got.status)
+	}
+}
+
+func TestRunScreenVisualSelectionAndYank(t *testing.T) {
+	m := runModel(t, "alpha", "bravo", "charlie")
+
+	next, _ := m.updateRun(keyMsg("V"))
+	m = next.(Model)
+	if m.visual != visualLine {
+		t.Fatalf("visual = %v, want visualLine", m.visual)
+	}
+
+	next, _ = m.updateRun(keyMsg("j"))
+	m = next.(Model)
+	if m.cursor.line != 1 {
+		t.Fatalf("cursor.line = %d, want 1 after j", m.cursor.line)
+	}
+
+	// The selection spans the two lines the cursor moved over.
+	if got := m.selectedText(); !strings.Contains(got, "alpha") || !strings.Contains(got, "bravo") {
+		t.Errorf("selectedText() = %q, want both selected lines", got)
+	}
+
+	next, _ = m.updateRun(keyMsg("y"))
+	m = next.(Model)
+	if m.visual != visualNone {
+		t.Error("the selection survived the yank")
+	}
+}
+
+func TestRunScreenEscCancelsSelectionBeforeLeaving(t *testing.T) {
+	m := runModel(t, "one", "two")
+
+	next, _ := m.updateRun(keyMsg("v"))
+	m = next.(Model)
+
+	// First esc drops the selection and stays put.
+	next, _ = m.updateRun(keyMsg("esc"))
+	m = next.(Model)
+	if m.visual != visualNone {
+		t.Error("esc did not cancel the selection")
+	}
+	if m.screen != screenRun {
+		t.Error("esc left the run screen while cancelling a selection")
+	}
+
+	// Second esc leaves.
+	next, _ = m.updateRun(keyMsg("esc"))
+	if next.(Model).screen != screenBrowse {
+		t.Error("a second esc did not return to the list")
+	}
+}
+
+func TestRunScreenWillNotLeaveWhileRunning(t *testing.T) {
+	m := runModel(t, "compiling…")
+	m.runDone = false
+
+	next, _ := m.updateRun(keyMsg("esc"))
+	got := next.(Model)
+	if got.screen != screenRun {
+		t.Error("esc left the run screen while the operation was still running")
+	}
+	if !strings.Contains(got.status, "still running") {
+		t.Errorf("status = %q, want it to say why", got.status)
+	}
+}
+
+// New output must not yank the ground out from under an active selection.
+func TestNewOutputDoesNotScrollAnActiveSelection(t *testing.T) {
+	m := runModel(t, "line one", "line two")
+
+	next, _ := m.updateRun(keyMsg("V"))
+	m = next.(Model)
+	at := m.cursor.line
+
+	m.logLines = append(m.logLines, "line three", "line four")
+	m.syncLog()
+
+	if m.cursor.line != at {
+		t.Errorf("cursor moved from %d to %d when output arrived", at, m.cursor.line)
+	}
+	if m.visual != visualLine {
+		t.Error("new output cancelled the selection")
+	}
+}
+
+// Held keys arrive coalesced; motions have to see them one at a time.
+func TestRunScreenHandlesCoalescedMotions(t *testing.T) {
+	m := runModel(t, "a", "b", "c", "d", "e")
+
+	next, _ := m.updateRun(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jjj")})
+	if got := next.(Model).cursor.line; got != 3 {
+		t.Errorf("cursor.line = %d after \"jjj\", want 3", got)
 	}
 }

@@ -18,6 +18,9 @@ import (
 type packageItem struct {
 	pkg       *pkg.Package
 	installed *pkg.Package
+	// broken means the manifest says installed but the binaries or resource
+	// trees it names are not there.
+	broken bool
 }
 
 // hasUpdate reports whether an installed package is behind the registry.
@@ -122,6 +125,10 @@ func renderEntry(entry packageItem, width int, st entryState, s Styles) []string
 
 	badge := ""
 	switch {
+	// Broken outranks the update badge: offering an update for something that
+	// is not on disk is the misleading half of the same fact.
+	case entry.broken:
+		badge = " " + s.Err.Render(s.Icons.Error+" broken")
 	case entry.hasUpdate():
 		badge = " " + s.BadgeUpdate.Render(s.Icons.Update)
 	case entry.installed != nil:
@@ -361,10 +368,10 @@ func newPackageList(s Styles) list.Model {
 }
 
 // buildItems turns the registry and installed sets into list items for a tab.
-func buildItems(packages []*pkg.Package, installed map[string]*pkg.Package, tab tabID) []list.Item {
+func buildItems(packages []*pkg.Package, installed map[string]*pkg.Package, broken map[string]bool, tab tabID) []list.Item {
 	items := make([]list.Item, 0, len(packages))
 	for _, p := range packages {
-		entry := packageItem{pkg: p, installed: installed[p.Name]}
+		entry := packageItem{pkg: p, installed: installed[p.Name], broken: broken[p.Name]}
 		switch tab {
 		case tabInstalled:
 			if entry.installed == nil {

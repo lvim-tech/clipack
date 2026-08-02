@@ -281,6 +281,48 @@ func CopyTree(src, dst string) error {
 	})
 }
 
+// MissingArtifacts lists the binaries and resource trees a package's manifest
+// claims are installed but which are not on disk.
+//
+// A package counts as installed because its manifest exists under configs/,
+// and the manifest outlives whatever it describes: a binary can be deleted,
+// replaced by something that is not a program, or never written because the
+// build produced a different path than the package declared. clipack then
+// reports the package as installed, refuses to install it again, and offers an
+// update for something that is not there.
+//
+// The check is by existence and, for binaries, by being a regular file —
+// a stale unix socket sitting where a binary belongs looks installed to
+// os.Stat but is not a program, and PATH skips it silently.
+func (p *Package) MissingArtifacts(config *cnfg.Config) []string {
+	var missing []string
+
+	for _, bin := range p.Install.Binaries {
+		path := filepath.Join(config.Paths.Bin, filepath.Base(bin))
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			missing = append(missing, path)
+		}
+	}
+
+	for _, res := range p.Install.Resources {
+		if res.Target == "" {
+			continue
+		}
+		path := filepath.Join(config.Paths.Base, res.Target)
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			missing = append(missing, path)
+		}
+	}
+
+	return missing
+}
+
+// IsIntact reports whether everything the manifest describes is still present.
+func (p *Package) IsIntact(config *cnfg.Config) bool {
+	return len(p.MissingArtifacts(config)) == 0
+}
+
 // LoadInstalledPackages loads installed packages from the config directory.
 // A missing configs directory means "nothing installed yet", not an error.
 func LoadInstalledPackages(config *cnfg.Config) ([]*Package, error) {

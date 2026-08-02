@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/lvim-tech/clipack/pkg"
 	"github.com/lvim-tech/clipack/tui"
@@ -55,8 +56,18 @@ be browsed, filtered and installed.`,
 			// Installing over an existing install would leave the previous
 			// version's binaries, resource trees and man pages behind: only
 			// update knows what they were, because it reads the manifest first.
-			if installed[name] != nil {
-				return fmt.Errorf("%s is already installed: use 'clipack update %s', or 'clipack remove %s' first", name, name, name)
+			//
+			// Unless there is nothing to leave behind. A manifest outlives what
+			// it describes, and a package whose binary is gone is not installed
+			// in any sense the user cares about — refusing to install it, and
+			// pointing at update instead, is the least useful thing to say.
+			if prev := installed[name]; prev != nil {
+				if missing := prev.MissingArtifacts(config); len(missing) == 0 {
+					return fmt.Errorf("%s is already installed: use 'clipack update %s', or 'clipack remove %s' first", name, name, name)
+				} else {
+					fmt.Printf("%s is recorded as installed but %s is missing; reinstalling\n",
+						name, strings.Join(missing, ", "))
+				}
 			}
 
 			if !installYes && !confirmInstall(selected, method, config.Paths.Build) {

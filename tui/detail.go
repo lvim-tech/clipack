@@ -118,6 +118,14 @@ func renderStatus(entry packageItem, s Styles) string {
 		installedRef = shortCommit(installedRef)
 	}
 
+	// A manifest without its artifacts is not an install. Saying so here is the
+	// difference between "why does this not run" and one glance.
+	if entry.broken {
+		return s.Err.Render("Broken") +
+			s.Muted.Render(fmt.Sprintf("  recorded as %s: %s, but its files are gone", method, installedRef)) + "\n" +
+			s.Muted.Render("  install again to rebuild it") + "\n"
+	}
+
 	line := s.OK.Render("Installed") +
 		s.Muted.Render(fmt.Sprintf("  %s: %s", method, installedRef)) + "\n"
 

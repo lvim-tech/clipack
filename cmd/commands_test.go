@@ -369,9 +369,15 @@ func TestUpdateListsWhatIsAvailable(t *testing.T) {
 	if !strings.Contains(stdout, "1 update(s) available") {
 		t.Errorf("output does not count the updates:\n%s", stdout)
 	}
-	// Listing alone must not change anything on disk.
-	if exists(filepath.Join(config.Paths.Bin, "demo")) {
-		t.Error("update without --all installed something")
+	// Listing alone must not change anything on disk. The fixture now writes a
+	// stub binary — a manifest without one no longer counts as installed — so
+	// what proves nothing ran is the stub still being the stub.
+	body, err := os.ReadFile(filepath.Join(config.Paths.Bin, "demo"))
+	if err != nil {
+		t.Fatalf("the installed binary went missing: %v", err)
+	}
+	if string(body) != "#!/bin/sh\n" {
+		t.Error("update without --all rebuilt the binary")
 	}
 }
 
@@ -585,5 +591,39 @@ func TestAddExecutablesPathCancelled(t *testing.T) {
 	}
 	if exists(filepath.Join(home, ".bashrc")) {
 		t.Error(".bashrc was written even though the prompt was declined")
+	}
+}
+
+// A package whose manifest survived but whose binary did not is not installed
+// in any sense the user cares about. Refusing to install it, and pointing at
+// update instead, leaves them with nothing that works and no way forward.
+func TestInstallProceedsWhenTheRecordedInstallIsBroken(t *testing.T) {
+	config := setupCmdTest(t)
+	seedCache(t, config, demoPackage())
+	installBrokenManifest(t, config, demoPackage())
+
+	stdout, _, err := execute(t, "install", "demo", "-y")
+	if err != nil {
+		t.Fatalf("install error = %v, want the broken install to be replaced", err)
+	}
+	if !strings.Contains(stdout, "recorded as installed") {
+		t.Errorf("output does not say why it reinstalled:\n%s", stdout)
+	}
+	if !exists(filepath.Join(config.Paths.Bin, "demo")) {
+		t.Error("the binary was not installed")
+	}
+}
+
+func TestListReportsABrokenInstall(t *testing.T) {
+	config := setupCmdTest(t)
+	seedCache(t, config, demoPackage())
+	installBrokenManifest(t, config, demoPackage())
+
+	stdout, _, err := execute(t, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "broken") {
+		t.Errorf("list does not flag the broken install:\n%s", stdout)
 	}
 }

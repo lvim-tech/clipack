@@ -246,3 +246,37 @@ func TestResourceClause(t *testing.T) {
 		})
 	}
 }
+
+func TestDetailReportsABrokenInstall(t *testing.T) {
+	entry := packageItem{
+		pkg:       &pkg.Package{Name: "tmux", Version: "3.7b"},
+		installed: &pkg.Package{Name: "tmux", Version: "3.7b", InstallMethod: pkg.MethodVersion},
+		broken:    true,
+	}
+
+	out := renderDetail(entry, 60, DefaultStyles())
+	for _, want := range []string{"Broken", "files are gone", "install again"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the detail pane is missing %q", want)
+		}
+	}
+	// Offering an update for something that is not on disk is the misleading
+	// half of the same fact.
+	if strings.Contains(out, "Update available") {
+		t.Error("a broken install was offered an update")
+	}
+}
+
+func TestListEntryBadgesABrokenInstall(t *testing.T) {
+	entry := packageItem{
+		pkg:       &pkg.Package{Name: "tmux", Version: "3.7b", Description: "Terminal multiplexer"},
+		installed: &pkg.Package{Name: "tmux", Version: "3.5a"},
+		broken:    true,
+	}
+
+	lines := renderEntry(entry, 60, entryState{}, DefaultStyles())
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "broken") {
+		t.Errorf("the list entry does not flag it:\n%s", joined)
+	}
+}

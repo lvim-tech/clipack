@@ -129,7 +129,12 @@ type Model struct {
 	// Data.
 	packages  []*pkg.Package
 	installed map[string]*pkg.Package
-	method    string
+	// broken names the installed packages whose manifest describes artifacts
+	// that are no longer on disk. Computed when `installed` is loaded rather
+	// than while drawing: the list re-renders on every keystroke, and this
+	// costs a stat per binary.
+	broken map[string]bool
+	method string
 
 	// checked holds the packages picked for a batch operation, keyed by name so
 	// the marks survive scrolling and re-sorting. lastFilter is what the filter
@@ -480,6 +485,7 @@ func (m Model) handleRegistryLoaded(msg registryLoadedMsg) (tea.Model, tea.Cmd) 
 
 	m.packages = msg.packages
 	m.installed = msg.installed
+	m.refreshBroken()
 	m.err = nil
 
 	switch {
@@ -498,8 +504,21 @@ func (m Model) handleRegistryLoaded(msg registryLoadedMsg) (tea.Model, tea.Cmd) 
 
 // applyTab repopulates the list for the active tab, keeping the selection in
 // range, and refreshes the detail pane.
+// refreshBroken re-checks every installed package against what is on disk.
+func (m *Model) refreshBroken() {
+	m.broken = make(map[string]bool, len(m.installed))
+	if m.config == nil {
+		return
+	}
+	for name, p := range m.installed {
+		if !p.IsIntact(m.config) {
+			m.broken[name] = true
+		}
+	}
+}
+
 func (m *Model) applyTab() {
-	items := buildItems(m.packages, m.installed, m.tab)
+	items := buildItems(m.packages, m.installed, m.broken, m.tab)
 	m.list.SetItems(items)
 	if m.list.Index() >= len(items) {
 		m.list.Select(0)
@@ -1385,6 +1404,7 @@ func (m Model) handleOpFinished(msg opFinishedMsg) (tea.Model, tea.Cmd) {
 	installed, err := pkg.InstalledMap(m.config)
 	if err == nil {
 		m.installed = installed
+		m.refreshBroken()
 		m.applyTab()
 	}
 

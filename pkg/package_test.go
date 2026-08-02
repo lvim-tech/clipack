@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -404,5 +405,89 @@ func TestInstalledMap(t *testing.T) {
 	}
 	if _, ok := m["missing"]; ok {
 		t.Error("InstalledMap() contains an entry for a package that is not installed")
+	}
+}
+
+// A manifest outlives what it describes. These are the shapes that produced a
+// package clipack called installed while nothing of it was on disk.
+func TestMissingArtifacts(t *testing.T) {
+	config := testConfig(t)
+
+	p := &Package{
+		Name: "demo",
+		Install: Install{
+			Binaries:  []string{"out/demo", "out/demo-helper"},
+			Resources: []Resource{{Source: "out/lib/demo", Target: "lib/demo"}},
+		},
+	}
+
+	// Nothing installed at all.
+	if got := p.MissingArtifacts(config); len(got) != 3 {
+		t.Fatalf("got %d missing, want 3: %v", len(got), got)
+	}
+	if p.IsIntact(config) {
+		t.Error("IsIntact() = true with nothing on disk")
+	}
+
+	write := func(rel string) {
+		t.Helper()
+		path := filepath.Join(config.Paths.Bin, rel)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("demo")
+	write("demo-helper")
+	if err := os.MkdirAll(filepath.Join(config.Paths.Base, "lib", "demo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := p.MissingArtifacts(config); len(got) != 0 {
+		t.Errorf("got %v missing, want none", got)
+	}
+	if !p.IsIntact(config) {
+		t.Error("IsIntact() = false with everything on disk")
+	}
+}
+
+// The case that started this: a stale unix socket sitting where the binary
+// belongs. os.Stat finds it, so an existence check alone says installed — but
+// it is not a program, and PATH skips it without a word.
+func TestMissingArtifactsRejectsANonRegularFile(t *testing.T) {
+	config := testConfig(t)
+	p := &Package{Name: "tmux", Install: Install{Binaries: []string{"tmux"}}}
+
+	sock := filepath.Join(config.Paths.Bin, "tmux")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Skipf("cannot create a unix socket here: %v", err)
+	}
+	defer l.Close()
+
+	if _, err := os.Stat(sock); err != nil {
+		t.Fatalf("the socket was not created: %v", err)
+	}
+	if got := p.MissingArtifacts(config); len(got) != 1 {
+		t.Errorf("got %v, want the socket reported as missing", got)
+	}
+}
+
+// A resource target that is a FILE where a directory belongs is broken too.
+func TestMissingArtifactsRejectsAFileWhereATreeBelongs(t *testing.T) {
+	config := testConfig(t)
+	p := &Package{
+		Name:    "demo",
+		Install: Install{Resources: []Resource{{Source: "out/x", Target: "lib/demo"}}},
+	}
+
+	if err := os.MkdirAll(filepath.Join(config.Paths.Base, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config.Paths.Base, "lib", "demo"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := p.MissingArtifacts(config); len(got) != 1 {
+		t.Errorf("got %v, want the file reported as missing", got)
 	}
 }

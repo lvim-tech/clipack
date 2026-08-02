@@ -49,6 +49,10 @@ var listCmd = &cobra.Command{
 			switch {
 			case installed != nil && pkg.HasUpdate(p, installed):
 				status = "update"
+			case installed != nil && len(installed.MissingArtifacts(config)) > 0:
+				// The manifest is there but what it describes is not, which is
+				// worth saying plainly rather than reporting as installed.
+				status = "broken"
 			case installed != nil:
 				status = "installed"
 			}

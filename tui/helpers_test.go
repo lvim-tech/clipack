@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -111,7 +112,36 @@ func applyMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	if !ok {
 		t.Fatalf("Update() returned %T, want tui.Model", next)
 	}
+	drainOpOnCleanup(t, got)
 	return got
+}
+
+// drained records the streams already waited on, so repeated Updates on a model
+// that is running an operation register one cleanup rather than dozens.
+var drained sync.Map
+
+// drainOpOnCleanup makes the test wait for any operation the model just started
+// before it returns.
+//
+// Confirming an action spawns a real installer goroutine that builds under the
+// configured directories, and those live in t.TempDir(). Without this the test
+// finishes while the goroutine is still writing, and the cleanup fails with
+// "directory not empty" — intermittently, on whichever test happened to lose
+// the race. The stream closes its event channel when the operation ends, so
+// draining it to close is the wait.
+func drainOpOnCleanup(t *testing.T, m Model) {
+	t.Helper()
+
+	if m.stream == nil {
+		return
+	}
+	if _, seen := drained.LoadOrStore(m.stream, true); seen {
+		return
+	}
+	t.Cleanup(func() {
+		for range m.stream.events { //nolint:revive // draining to close is the point
+		}
+	})
 }
 
 // applyMsgCmd runs one Update and returns both the model and the command.
@@ -123,6 +153,7 @@ func applyMsgCmd(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 	if !ok {
 		t.Fatalf("Update() returned %T, want tui.Model", next)
 	}
+	drainOpOnCleanup(t, got)
 	return got, cmd
 }
 

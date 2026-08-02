@@ -53,6 +53,19 @@ func installManifest(t *testing.T, config *cnfg.Config, p *pkg.Package) {
 	if err := os.WriteFile(filepath.Join(dir, "package.yaml"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// The manifest alone is not an install: clipack now checks that what it
+	// describes is on disk, so the fixture has to put the binaries there too.
+	// Use installBrokenManifest for the case where they are deliberately absent.
+	for _, bin := range p.Install.Binaries {
+		target := filepath.Join(config.Paths.Bin, filepath.Base(bin))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // demoPackage is a package that "builds" from shell built-ins, so an install
@@ -191,4 +204,18 @@ func findCommand(t *testing.T, name string) *cobra.Command {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// installBrokenManifest records a package as installed without creating any of
+// the artifacts it declares — a manifest that outlived its binaries, which is
+// what a deleted or replaced binary leaves behind.
+func installBrokenManifest(t *testing.T, config *cnfg.Config, p *pkg.Package) {
+	t.Helper()
+
+	installManifest(t, config, p)
+	for _, bin := range p.Install.Binaries {
+		if err := os.Remove(filepath.Join(config.Paths.Bin, filepath.Base(bin))); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

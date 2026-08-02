@@ -69,6 +69,20 @@ func renderDetail(entry packageItem, method string, width int, s Styles) string 
 	b.WriteString("\n")
 	b.WriteString(renderStatus(entry, s))
 
+	// What the machine needs before any of the steps below can run. Above the
+	// steps rather than below them: this is what to read first when a build
+	// fails, and the command is the answer to what to do about it.
+	if req := entry.requirements(method); !req.Empty() {
+		b.WriteString("\n" + s.DetailTitle.Render("Requirements") + "\n")
+		for _, tool := range req.Toolchain {
+			b.WriteString(s.Muted.Render("  "+s.Icons.Bullet+" ") + tool + "\n")
+		}
+		if cmd := pkg.ZypperCommand(req.OpenSUSE); cmd != "" {
+			b.WriteString(wrap.Render(s.Muted.Render("  openSUSE — select with v and copy with y:")) + "\n")
+			b.WriteString(wrap.Render("  "+cmd) + "\n")
+		}
+	}
+
 	if len(p.Install.Steps) > 0 {
 		b.WriteString("\n" + s.DetailTitle.Render("Build steps") + "\n")
 		for i, step := range p.Install.Steps {

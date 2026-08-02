@@ -28,6 +28,16 @@ func (i packageItem) hasUpdate() bool {
 	return pkg.HasUpdate(i.pkg, i.installed)
 }
 
+// requirements is what this package needs for the method it will be built with:
+// the one it is installed under when it is on disk, so an update shows what its
+// own rebuild needs rather than what the other ref would.
+func (i packageItem) requirements(method string) pkg.MethodRequirements {
+	if i.installed != nil && i.installed.InstallMethod != "" {
+		method = i.installed.InstallMethod
+	}
+	return i.pkg.Requirements.For(method)
+}
+
 // FilterValue implements list.Item. Tags and category are included so "/" can
 // find a package by what it does, not only by its name.
 func (i packageItem) FilterValue() string {

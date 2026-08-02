@@ -408,6 +408,7 @@ install:
 | Field | Meaning |
 |---|---|
 | `version` / `commit` | The two refs a package can be pinned to. |
+| `requirements` | What has to be on the machine before the build can run: `opensuse` package names and `toolchain` entries with their version constraints. `version` and `commit` sub-keys add to that set for one ref only. See below. |
 | `install.source.url` | Preferred source of the clone URL. |
 | `install.steps` | Shell commands, run in order inside the build directory. |
 | `install.binaries` | Paths, relative to the build directory, copied into `bin/`. |
@@ -445,6 +446,48 @@ inside `base`, may not touch `bin/`, `configs/`, `build/`, `man/` or
 `registry/`, and may not be a top-level directory: `lib/kitty` belongs to one
 package and removing it is safe, whereas `lib` is shared and the first uninstall
 would empty it for everyone.
+
+**Requirements**
+
+A from-source package manager fails on whatever the machine is missing, and the
+error names a header rather than a package. Declaring what a build needs turns
+that into something you can act on:
+
+```yaml
+requirements:
+    opensuse:
+        - gtk4-devel
+        - libadwaita-devel
+        - gtk4-layer-shell-devel
+        - blueprint-compiler
+    toolchain:
+        - "pkg-config"
+    version:
+        toolchain:
+            - "zig == 0.15.2"
+    commit:
+        toolchain:
+            - "zig >= 0.16"
+```
+
+The details pane shows this for the selected package, followed by a
+`sudo zypper in …` line assembled from the `opensuse` names — select it with `v`
+and copy it with `y`.
+
+The split is deliberate. Distribution packages are installable with one command,
+so clipack renders one. A toolchain is named with the constraint it has to
+satisfy and left alone: it may live in mise, rustup or the distribution, and
+clipack has no business guessing which.
+
+`version` and `commit` **add** to the shared set rather than replacing it,
+because both refs of a package are usually built the same way. ghostty is why
+they exist at all: its release tag refuses to build with anything but zig
+0.15.2, while its main branch requires 0.16.0. A single list could only ever be
+right for one of them.
+
+Only `opensuse` is defined. Another distribution gets its own key when someone
+has verified the names on one — a guessed package name is worse than no list,
+because it fails after the user has already trusted it.
 
 **Desktop entries**
 

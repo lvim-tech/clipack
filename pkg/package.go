@@ -71,6 +71,87 @@ type Resource struct {
 	Target string `yaml:"target"`
 }
 
+// Requirements are what has to be on the machine before a build can start.
+//
+// Split in two because they are obtained differently. Distribution packages can
+// be installed with one command, which clipack renders ready to paste; a
+// toolchain is named with the version it has to satisfy and left to the user,
+// who may keep it in mise, rustup or the distribution and would not thank
+// clipack for guessing.
+//
+// Version and Commit add to the shared set rather than replacing it, because
+// the two refs of one package are usually built the same way — and when they
+// are not, that difference is the only thing worth writing down. ghostty is the
+// case that earned this: its release tag demands zig 0.15.2 and its main branch
+// 0.16.0, and a single list could only ever be wrong for one of them.
+type Requirements struct {
+	MethodRequirements `yaml:",inline"`
+	Version            MethodRequirements `yaml:"version,omitempty"`
+	Commit             MethodRequirements `yaml:"commit,omitempty"`
+}
+
+// MethodRequirements is one set of requirements, for a distribution and for
+// toolchains.
+type MethodRequirements struct {
+	// OpenSUSE names packages as zypper knows them. Other distributions get
+	// their own field when someone verifies the names on one — a guessed
+	// package name is worse than none, because it fails at the point where the
+	// user has already trusted it.
+	OpenSUSE []string `yaml:"opensuse,omitempty"`
+	// Toolchain entries carry their version constraint, e.g. "zig >= 0.16".
+	Toolchain []string `yaml:"toolchain,omitempty"`
+}
+
+// Empty reports whether there is nothing to require.
+func (r MethodRequirements) Empty() bool {
+	return len(r.OpenSUSE) == 0 && len(r.Toolchain) == 0
+}
+
+// For returns what a build with the given method needs: the shared set plus
+// whatever that method adds.
+func (r Requirements) For(method string) MethodRequirements {
+	extra := r.Version
+	if method == MethodCommit {
+		extra = r.Commit
+	}
+	return MethodRequirements{
+		OpenSUSE:  mergeRequirements(r.OpenSUSE, extra.OpenSUSE),
+		Toolchain: mergeRequirements(r.Toolchain, extra.Toolchain),
+	}
+}
+
+// mergeRequirements concatenates two lists, dropping duplicates and keeping the
+// order they were written in — the registry lists them in the order a reader
+// would want to see them, not alphabetically.
+func mergeRequirements(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+
+	seen := make(map[string]bool, len(base)+len(extra))
+	merged := make([]string, 0, len(base)+len(extra))
+	for _, list := range [][]string{base, extra} {
+		for _, item := range list {
+			if item == "" || seen[item] {
+				continue
+			}
+			seen[item] = true
+			merged = append(merged, item)
+		}
+	}
+	return merged
+}
+
+// ZypperCommand renders the command that installs the named packages on
+// openSUSE, ready to be copied into a terminal. It returns "" for an empty list
+// rather than a command that would do nothing.
+func ZypperCommand(packages []string) string {
+	if len(packages) == 0 {
+		return ""
+	}
+	return "sudo zypper in " + strings.Join(packages, " ")
+}
+
 // DesktopEntry is a .desktop file a package ships, installed into the user's
 // application directory so a graphical program appears in menus and launchers.
 //
@@ -112,19 +193,23 @@ type Script struct {
 
 // Package holds the package data.
 type Package struct {
-	Name          string      `yaml:"name"`
-	Version       string      `yaml:"version"`
-	Commit        string      `yaml:"commit"`
-	Description   string      `yaml:"description"`
-	Maintainer    string      `yaml:"maintainer"`
-	UpdatedAt     time.Time   `yaml:"updated_at"`
-	Tags          []string    `yaml:"tags"`
-	Category      string      `yaml:"category,omitempty"`
-	License       string      `yaml:"license"`
-	Homepage      string      `yaml:"homepage"`
-	Install       Install     `yaml:"install"`
-	PostInstall   PostInstall `yaml:"post-install,omitempty"`
-	InstallMethod string      `yaml:"install_method,omitempty"`
+	Name        string    `yaml:"name"`
+	Version     string    `yaml:"version"`
+	Commit      string    `yaml:"commit"`
+	Description string    `yaml:"description"`
+	Maintainer  string    `yaml:"maintainer"`
+	UpdatedAt   time.Time `yaml:"updated_at"`
+	Tags        []string  `yaml:"tags"`
+	Category    string    `yaml:"category,omitempty"`
+	License     string    `yaml:"license"`
+	Homepage    string    `yaml:"homepage"`
+	// Requirements is what the machine needs before the build can run. It sits
+	// beside Install rather than inside it because it describes the machine, not
+	// the steps: nothing in it is fetched, built or removed by clipack.
+	Requirements  Requirements `yaml:"requirements,omitempty"`
+	Install       Install      `yaml:"install"`
+	PostInstall   PostInstall  `yaml:"post-install,omitempty"`
+	InstallMethod string       `yaml:"install_method,omitempty"`
 }
 
 // Ref returns the identifier this package is pinned to for the given method.

@@ -180,6 +180,13 @@ type DesktopEntry struct {
 	// Name replaces the displayed name. Empty appends " (clipack)" to whatever
 	// the shipped file says.
 	Name string `yaml:"name,omitempty"`
+	// Env is written into Exec as an `env K=V …` prefix. It exists because a
+	// menu entry runs with the session's environment, not the shell's: a
+	// program configured through a variable that config.sh exports (yazi's
+	// YAZI_CONFIG_HOME) looks themed in every terminal and unthemed when
+	// launched from the menu. The literal ${base} in a value is replaced with
+	// the installation's base directory at install time.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // AdditionalConfig holds additional configuration data.

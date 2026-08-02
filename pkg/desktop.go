@@ -63,6 +63,10 @@ type desktopRewrite struct {
 	// BinDir is clipack's bin directory. A program named in Exec is repointed at
 	// it when the binary is there.
 	BinDir string
+	// Env holds pre-rendered K=V pairs, sorted, written into Exec as an
+	// `env K=V …` prefix. Exec only: TryExec must stay a bare executable path,
+	// because launchers stat it rather than run it.
+	Env []string
 	// Name replaces the displayed name outright. Empty appends the suffix to
 	// whatever the file already says.
 	Name string
@@ -102,9 +106,12 @@ func rewriteDesktopEntry(contents []byte, rw desktopRewrite) []byte {
 		}
 
 		switch {
-		case strings.TrimSpace(key) == "Exec" || strings.TrimSpace(key) == "TryExec":
-			// Exec is rewritten in every group: the actions launch the program too.
+		case strings.TrimSpace(key) == "TryExec":
 			out.WriteString(key + "=" + rewriteExec(value, rw.BinDir) + "\n")
+
+		case strings.TrimSpace(key) == "Exec":
+			// Exec is rewritten in every group: the actions launch the program too.
+			out.WriteString(key + "=" + envPrefix(rw.Env) + rewriteExec(value, rw.BinDir) + "\n")
 
 		case group == "[Desktop Entry]" && isNameKey(key) && rw.Name != "":
 			out.WriteString(key + "=" + rw.Name + "\n")
@@ -123,6 +130,24 @@ func rewriteDesktopEntry(contents []byte, rw desktopRewrite) []byte {
 	// Split on "\n" produces a trailing empty element for a file that ended in a
 	// newline, and writing it back added one line too many.
 	return []byte(strings.TrimSuffix(out.String(), "\n"))
+}
+
+// envPrefix renders the `env K=V … ` prefix for an Exec line, or nothing when
+// there is no environment to carry. Values with spaces are quoted the way the
+// desktop entry specification quotes arguments.
+func envPrefix(pairs []string) string {
+	if len(pairs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(pairs)+1)
+	parts = append(parts, "env")
+	for _, pair := range pairs {
+		if strings.ContainsAny(pair, " \t") {
+			pair = `"` + pair + `"`
+		}
+		parts = append(parts, pair)
+	}
+	return strings.Join(parts, " ") + " "
 }
 
 // isNameKey reports whether a key is the display name or one of its localised

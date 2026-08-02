@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -560,6 +561,7 @@ func (in *Installer) installDesktopEntries(p *Package, paths Paths) []error {
 			BinDir: paths.Bin,
 			Name:   entry.Name,
 			Icon:   icon,
+			Env:    renderDesktopEnv(entry.Env, paths.Base),
 		})
 		if err := os.WriteFile(dst, rewritten, 0o644); err != nil {
 			in.warnf("could not write desktop entry %s: %v", dst, err)
@@ -568,6 +570,25 @@ func (in *Installer) installDesktopEntries(p *Package, paths Paths) []error {
 		in.infof("Installed desktop entry %s", dst)
 	}
 	return nil
+}
+
+// renderDesktopEnv turns the entry's env map into sorted K=V pairs, expanding
+// the ${base} placeholder. Sorted because map order is random and the entry
+// file should not churn between installs of the same definition.
+func renderDesktopEnv(env map[string]string, base string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+strings.ReplaceAll(env[k], "${base}", base))
+	}
+	return pairs
 }
 
 // installDesktopIcon copies the icon an entry declares and returns its absolute

@@ -209,3 +209,46 @@ func TestDesktopPathsRejectWhatIsNotAnEntry(t *testing.T) {
 		}
 	}
 }
+
+// TestRewriteDesktopEntryCarriesTheEnvironment covers programs configured
+// through variables their config.sh exports. A menu entry runs with the
+// session's environment, so without this prefix yazi launched from the menu
+// showed the built-in theme while every terminal showed the configured one.
+func TestRewriteDesktopEntryCarriesTheEnvironment(t *testing.T) {
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "yazi"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := "[Desktop Entry]\nTryExec=yazi\nExec=yazi %f\n\n[Desktop Action new]\nExec=yazi --new\n"
+	got := string(rewriteDesktopEntry([]byte(entry), desktopRewrite{
+		BinDir: binDir,
+		Env:    []string{"YAZI_CONFIG_HOME=/opt/clipack/configs/yazi"},
+	}))
+
+	bin := filepath.Join(binDir, "yazi")
+	if !strings.Contains(got, "Exec=env YAZI_CONFIG_HOME=/opt/clipack/configs/yazi "+bin+" %f") {
+		t.Errorf("entry = %q, want the env prefix on Exec", got)
+	}
+	// Actions launch the program too, so they need the same environment.
+	if !strings.Contains(got, "Exec=env YAZI_CONFIG_HOME=/opt/clipack/configs/yazi "+bin+" --new") {
+		t.Errorf("entry = %q, want the env prefix on the action's Exec", got)
+	}
+	// TryExec is a file-existence probe, not a command: an env prefix there
+	// makes launchers hide the entry because "env" is not the program.
+	if !strings.Contains(got, "TryExec="+bin+"\n") || strings.Contains(got, "TryExec=env") {
+		t.Errorf("entry = %q, want TryExec left as the bare binary", got)
+	}
+}
+
+func TestRenderDesktopEnvExpandsBaseAndSorts(t *testing.T) {
+	got := renderDesktopEnv(map[string]string{
+		"B_VAR": "plain",
+		"A_VAR": "${base}/configs/yazi",
+	}, "/home/x/clipack")
+
+	want := []string{"A_VAR=/home/x/clipack/configs/yazi", "B_VAR=plain"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("renderDesktopEnv() = %v, want %v — sorted, with ${base} expanded", got, want)
+	}
+}

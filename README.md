@@ -414,7 +414,7 @@ install:
 | `install.steps` | Shell commands, run in order inside the build directory. |
 | `install.binaries` | Paths, relative to the build directory, copied into `bin/`. |
 | `install.resources` | Directory trees a program needs beside its binary, as `source` (relative to the build directory) and `target` (relative to `base`). Recorded in the manifest, so uninstalling removes them. See below. |
-| `install.desktop` | Menu entries a graphical program ships, as `source` (a `.desktop` file relative to the build directory), an optional `icon` and an optional `name`. Installed into the user's application directory. See below. |
+| `install.desktop` | Menu entries a graphical program ships, as `source` (a `.desktop` file relative to the build directory), optional `icon`, `name` and `env`. Installed into the user's application directory. See below. |
 | `install.configs` | Files copied from the build tree into `configs/<name>/`. |
 | `install.man` | Man pages; the extension picks the section (`.1` → `man1/`). |
 | `install.additional-config` | Files written into `configs/<name>/`. A value starting with `http://` or `https://` is downloaded; anything else is used literally. `.sh` files are made executable. |
@@ -545,6 +545,12 @@ Three things are rewritten on the way in:
 - **`Icon`** is repointed at the installed icon when one is declared. Without
   `icon:` the entry falls back to the icon theme, which has a matching icon only
   when a system package supplied one.
+- **`env:`** becomes an `env K=V …` prefix on every `Exec`. A menu entry runs
+  with the session's environment, not the shell's — a program configured
+  through a variable that `config.sh` exports (yazi's `YAZI_CONFIG_HOME`)
+  would launch themed from a terminal and unthemed from the menu. `${base}` in
+  a value expands to the installation directory. `TryExec` is never prefixed:
+  launchers stat it rather than run it.
 
 Entries and icons go into the manifest, so `remove` deletes them. Removal can
 only reach files clipack wrote: the installed name is derived from the package

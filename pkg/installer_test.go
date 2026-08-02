@@ -952,3 +952,65 @@ func TestFailedUpdateKeepsThePreviousInstall(t *testing.T) {
 		t.Errorf("installed = %v, want v1.0.0 still recorded", installed["demo"])
 	}
 }
+
+// TestStepsDoNotInheritConfigSite pins the yazi lesson at the right layer.
+// openSUSE exports CONFIG_SITE for every session, autoconf inside vendored
+// builds honours it, and their build scripts do not — tikv-jemalloc-sys
+// installed its static library into out/lib64 and linked against out/lib.
+// clipack's builds install no system libraries, so the variable is stripped
+// for every step; an entry that truly needs it can still set it explicitly.
+func TestStepsDoNotInheritConfigSite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+	t.Setenv("CONFIG_SITE", "/usr/share/site/x86_64-pc-linux-gnu")
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	probe := &Package{
+		Name:    "demo",
+		Version: "v1.0.0",
+		Install: Install{
+			Steps: []string{
+				"mkdir -p out",
+				`printf '[%s]' "$CONFIG_SITE" > out/demo`,
+			},
+			Binaries: []string{"out/demo"},
+		},
+	}
+	if err := in.Install(probe, MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(config.Paths.Bin, "demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "[]" {
+		t.Errorf("step saw CONFIG_SITE=%s, want it stripped", data)
+	}
+
+	// The explicit override still wins — appended after the filtered base.
+	probe2 := &Package{
+		Name:    "demo2",
+		Version: "v1.0.0",
+		Install: Install{
+			Environment: map[string]string{"CONFIG_SITE": "/custom/site"},
+			Steps: []string{
+				"mkdir -p out",
+				`printf '[%s]' "$CONFIG_SITE" > out/demo2`,
+			},
+			Binaries: []string{"out/demo2"},
+		},
+	}
+	if err := in.Install(probe2, MethodVersion); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err = os.ReadFile(filepath.Join(config.Paths.Bin, "demo2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "[/custom/site]" {
+		t.Errorf("override saw %s, want [/custom/site]", data)
+	}
+}

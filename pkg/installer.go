@@ -475,6 +475,32 @@ func (in *Installer) expandSteps(p *Package, method string) []string {
 // than strings.Fields) preserves quoting, pipes and && in registry steps, and
 // cmd.Dir replaces the old process-wide os.Chdir, which corrupted relative
 // paths for everything else running in the process.
+// buildEnv is the environment a step runs with: the process environment minus
+// CONFIG_SITE, plus the entry's own variables — appended last, so an entry
+// that genuinely needs the variable can still set it in install.environment.
+//
+// CONFIG_SITE is openSUSE's autoconf site file (/etc/profile.d/site.sh exports
+// it), and it makes every configure default libdir to lib64. Nothing clipack
+// builds installs libraries into the system, so the variable buys the builds
+// nothing — and it broke one: a vendored jemalloc inside a cargo build honours
+// it while the crate's build script does not, so tikv-jemalloc-sys installed
+// libjemalloc_pic.a into out/lib64 and told rustc to search out/lib. yazi's
+// main branch hit that live; fd, difftastic and qsv carry the same crate on
+// linux-gnu and would have hit it on their first install.
+func buildEnv(base []string, extra map[string]string) []string {
+	out := make([]string, 0, len(base)+len(extra))
+	for _, kv := range base {
+		if strings.HasPrefix(kv, "CONFIG_SITE=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	for k, v := range extra {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
 func (in *Installer) runCommand(step, dir string, env map[string]string) error {
 	shell := "/bin/sh"
 	args := []string{"-c", step}
@@ -485,13 +511,7 @@ func (in *Installer) runCommand(step, dir string, env map[string]string) error {
 
 	cmd := exec.Command(shell, args...)
 	cmd.Dir = dir
-
-	if len(env) > 0 {
-		cmd.Env = os.Environ()
-		for k, v := range env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-	}
+	cmd.Env = buildEnv(os.Environ(), env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

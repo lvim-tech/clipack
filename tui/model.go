@@ -331,20 +331,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Every state-changing message goes through relayoutIfNeeded, not only the
+	// key handlers below. Loading the registry is what taught this: it grows
+	// the help line (a selected package brings its action keys), and with the
+	// guard only on the key paths the first frame after startup was one line
+	// taller than the terminal — the title scrolled off until the first
+	// keystroke happened to re-lay-out.
 	case setupDoneMsg:
-		return m.handleSetupDone(msg)
+		return relayoutIfNeeded(m.handleSetupDone(msg))
 
 	case shellPathMsg:
-		return m.handleShellPath(msg)
+		return relayoutIfNeeded(m.handleShellPath(msg))
 
 	case registryLoadedMsg:
-		return m.handleRegistryLoaded(msg)
+		return relayoutIfNeeded(m.handleRegistryLoaded(msg))
 
 	case opEventsMsg:
-		return m.handleOpEvents(msg)
+		return relayoutIfNeeded(m.handleOpEvents(msg))
 
 	case opFinishedMsg:
-		return m.handleOpFinished(msg)
+		return relayoutIfNeeded(m.handleOpFinished(msg))
 
 	case tea.KeyMsg:
 		// Ctrl+C always quits, whatever the screen or focus.

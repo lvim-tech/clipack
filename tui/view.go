@@ -19,18 +19,38 @@ func (m Model) View() string {
 		return "\n  Starting clipack…\n"
 	}
 
+	var frame string
 	switch m.screen {
 	case screenSetup:
-		return m.styles.App.Render(m.viewSetup())
+		frame = m.styles.App.Render(m.viewSetup())
 	case screenLoading:
-		return m.styles.App.Render(m.viewLoading())
+		frame = m.styles.App.Render(m.viewLoading())
 	case screenRun:
-		return m.styles.App.Render(m.viewRun())
+		frame = m.styles.App.Render(m.viewRun())
 	case screenConfirm:
-		return m.viewConfirm()
+		frame = m.viewConfirm()
 	default:
-		return m.styles.App.Render(m.viewBrowse())
+		frame = m.styles.App.Render(m.viewBrowse())
 	}
+
+	// The backstop: a frame taller than the terminal scrolls the top line off,
+	// and the title never comes back until something re-lays-out. Sizing is
+	// layout()'s job and relayoutIfNeeded keeps it honest per message — but any
+	// transient state between the two must degrade to a clipped bottom line,
+	// never to a lost title.
+	return clampHeight(frame, m.height)
+}
+
+// clampHeight cuts a rendered frame to at most max lines, keeping the top.
+func clampHeight(frame string, max int) string {
+	if max <= 0 {
+		return frame
+	}
+	lines := strings.Split(frame, "\n")
+	if len(lines) <= max {
+		return frame
+	}
+	return strings.Join(lines[:max], "\n")
 }
 
 // ---------------------------------------------------------------------------

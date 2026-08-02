@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
 )
@@ -1160,6 +1161,30 @@ func TestHelpOffersTheInstallMethodToggle(t *testing.T) {
 	for _, want := range []string{"m install as commit", "M global: commit"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("collapsed help = %q, want it to contain %q", help, want)
+		}
+	}
+}
+
+// TestStartupFrameNeverExceedsTheTerminal is the "title scrolled off on first
+// open" regression. Loading the registry grows the help line — a selected
+// package brings its action keys — and only the key handlers used to pass
+// through relayoutIfNeeded, so the first frame after startup was taller than
+// the terminal until the first keystroke fixed it.
+func TestStartupFrameNeverExceedsTheTerminal(t *testing.T) {
+	packages, installed := samplePackages()
+
+	for _, width := range []int{60, 80, 100, 120} {
+		m := New(testConfig(t))
+		m = applyMsg(t, m, tea.WindowSizeMsg{Width: width, Height: 24})
+		m = applyMsg(t, m, registryLoadedMsg{packages: packages, installed: installed})
+
+		// The budget has to match reality on the very first frame after the
+		// load, not after the next keypress.
+		if got := lipgloss.Height(m.footer()); got != m.footerHeight {
+			t.Errorf("width %d: footer is %d lines but %d were budgeted", width, got, m.footerHeight)
+		}
+		if got := lipgloss.Height(m.View()); got > 24 {
+			t.Errorf("width %d: the frame is %d lines on a 24-line terminal", width, got)
 		}
 	}
 }

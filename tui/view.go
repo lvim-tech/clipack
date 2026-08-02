@@ -523,7 +523,31 @@ func (m Model) viewRun() string {
 	var indicator string
 	switch {
 	case !m.runDone:
-		indicator = m.spinner.View() + " " + fmt.Sprintf("%sing %s…", strings.TrimSuffix(verb, "e"), m.runTarget)
+		// The live line: which package, where in the batch, which step, what
+		// command. All of it comes from events the log already receives — this
+		// is the same information, put where the eye rests instead of where
+		// the log happens to have scrolled.
+		subject := m.runTarget
+		if m.runCurrent != "" {
+			subject = m.runCurrent
+			if m.runTotal > 1 {
+				subject += fmt.Sprintf(" (%d/%d)", m.runIndex, m.runTotal)
+			}
+		}
+		progress := ""
+		if m.runStepOf > 0 {
+			progress = fmt.Sprintf(" · step %d/%d", m.runStep, m.runStepOf)
+			if m.runStepText != "" {
+				// One line only: the first line of a multi-line step is the
+				// command, the rest is the comment block above it.
+				text := m.runStepText
+				if i := strings.IndexByte(text, '\n'); i >= 0 {
+					text = text[:i]
+				}
+				progress += ": " + text
+			}
+		}
+		indicator = m.spinner.View() + " " + fmt.Sprintf("%sing %s…%s", strings.TrimSuffix(verb, "e"), subject, progress)
 	case m.runFailed:
 		indicator = s.Err.Render(fmt.Sprintf("%s %s of %s failed", s.Icons.Error, verb, m.runTarget))
 	default:

@@ -185,6 +185,17 @@ type Model struct {
 	runTarget string
 	runFailed bool
 	runDone   bool
+	// The live indicator's state, fed from the same events the log renders:
+	// which package is being worked on, its position in the batch, and the
+	// step it is at. Without these the header said "Installing 8 packages…"
+	// from the first second to the last, and the only progress was the log
+	// scrolling somewhere below.
+	runTotal    int
+	runIndex    int
+	runCurrent  string
+	runStep     int
+	runStepOf   int
+	runStepText string
 
 	// Setup wizard.
 	setupAddShell bool
@@ -1502,6 +1513,10 @@ func (m Model) startOperation() (tea.Model, tea.Cmd) {
 	m.logLines = nil
 	m.runAction = act
 	m.runTarget = target
+	m.runTotal = len(batch)
+	m.runIndex = 0
+	m.runCurrent = ""
+	m.runStep, m.runStepOf, m.runStepText = 0, 0, ""
 	m.runFailed = false
 	m.runDone = false
 	m.pending = actionNone
@@ -1593,6 +1608,17 @@ func (m Model) handleOpEvents(msg opEventsMsg) (tea.Model, tea.Cmd) {
 	for _, event := range msg.events {
 		if event.Kind == pkg.EventError {
 			m.runFailed = true
+		}
+		// A new package name marks the next entry in the batch; a step event
+		// carries where inside that entry the build is. Both feed the header
+		// indicator, so progress is readable without chasing the log.
+		if event.Package != "" && event.Package != m.runCurrent {
+			m.runCurrent = event.Package
+			m.runIndex++
+			m.runStep, m.runStepOf, m.runStepText = 0, 0, ""
+		}
+		if event.Kind == pkg.EventStep {
+			m.runStep, m.runStepOf, m.runStepText = event.Step, event.Total, event.Text
 		}
 		m.logLines = append(m.logLines, formatEvent(event, m.styles))
 	}

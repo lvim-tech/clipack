@@ -516,3 +516,48 @@ func TestDetailKeysAndValuesAreSeparated(t *testing.T) {
 		t.Errorf("the install method row is not aligned:\n%s", detail)
 	}
 }
+
+// TestReinstallRunsOnTheMarkedPackages is the report "маркирах всички и
+// натиснах R но ми преинсталира само първото": the batch gate only admitted
+// the tab's own action, and R is nobody's tab action, so it silently fell to
+// the single-package path and rebuilt the row under the cursor.
+func TestReinstallRunsOnTheMarkedPackages(t *testing.T) {
+	m := atTab(t, tabInstalled)
+	m = applyMsg(t, m, keyMsg("a")) // маркирай всички
+	if m.checkedCount() != 2 {
+		t.Fatalf("checkedCount = %d, want both installed packages marked", m.checkedCount())
+	}
+
+	m = applyMsg(t, m, keyMsg("R"))
+
+	if m.screen != screenConfirm {
+		t.Fatalf("screen = %v, want the batch confirmation (status: %q)", m.screen, m.status)
+	}
+	if m.pending != actionReinstall {
+		t.Errorf("pending = %v, want actionReinstall", m.pending)
+	}
+	if len(m.pendingBatch) != 2 {
+		t.Errorf("pendingBatch = %d packages, want both marked ones", len(m.pendingBatch))
+	}
+	if len(m.pendingSkipped) != 0 {
+		t.Errorf("pendingSkipped = %v, want none: both are installed", m.pendingSkipped)
+	}
+
+	view := m.View()
+	for _, want := range []string{"Reinstall 2 package(s)?", "Configuration directories are deleted"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("confirm view is missing %q", want)
+		}
+	}
+}
+
+// TestReinstallLabelCarriesTheMarkCount makes the batch visible before the
+// keypress: "R rebuild 2" is what says the key stopped meaning the cursor row.
+func TestReinstallLabelCarriesTheMarkCount(t *testing.T) {
+	m := atTab(t, tabInstalled)
+	m = applyMsg(t, m, keyMsg("a"))
+
+	if desc := m.contextualKeys().Reinstall.Help().Desc; desc != "rebuild 2" {
+		t.Errorf("Reinstall help = %q, want %q", desc, "rebuild 2")
+	}
+}

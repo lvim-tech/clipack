@@ -842,6 +842,9 @@ func (m Model) contextualKeys() keyMap {
 			keys.Remove.SetEnabled(true)
 			keys.Remove.SetHelp("x", fmt.Sprintf("remove %d", n))
 		}
+		// Rebuild runs on marks in every checks tab, so its label carries the
+		// count wherever the marks are visible.
+		keys.Reinstall.SetHelp("R", fmt.Sprintf("rebuild %d", n))
 	}
 
 	// m always means the selected package and M always the default, in every
@@ -1271,7 +1274,11 @@ func actionKey(a action) string {
 // row under the cursor, so pressing x in the Updates tab removes the package
 // you are looking at rather than everything you happened to mark.
 func (m Model) requestAction(a action) (tea.Model, tea.Cmd) {
-	if m.showChecks() && m.checkedCount() > 0 && a == tabAction(m.tab) {
+	// Rebuild is the exception to "only the tab's own action runs on marks":
+	// it is not any tab's action, but rebuilding a marked set is exactly how a
+	// changed registry gets applied across the installed packages — and gated
+	// out of the batch path it silently rebuilt only the row under the cursor.
+	if m.showChecks() && m.checkedCount() > 0 && (a == tabAction(m.tab) || a == actionReinstall) {
 		return m.requestBatch(a)
 	}
 
@@ -1390,6 +1397,8 @@ func eligible(entry packageItem, a action) bool {
 	case actionUpdate:
 		return entry.installed != nil && entry.hasUpdate()
 	case actionRemove:
+		return entry.installed != nil
+	case actionReinstall:
 		return entry.installed != nil
 	default:
 		return false

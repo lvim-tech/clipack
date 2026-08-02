@@ -479,6 +479,11 @@ func (m Model) viewConfirmBatch(wrap lipgloss.Style) string {
 	if m.pending == actionInstall {
 		lines = append(lines, "", s.Muted.Render("Built from source, one after another."))
 	}
+	if m.pending == actionReinstall {
+		lines = append(lines, "",
+			wrap.Render(s.Muted.Render("Each is rebuilt from source at the ref it is already on. "+
+				"Configuration directories are deleted and recreated — changes made there are lost.")))
+	}
 
 	lines = append(lines, "", s.Muted.Render(m.hint("y confirm", "esc cancel")))
 

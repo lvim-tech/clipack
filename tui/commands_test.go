@@ -241,7 +241,7 @@ func TestSaveConfigCmdShellFailureIsNotFatal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// An unsupported shell makes the rc update fail; the configuration itself
 	// is still usable, so setup must not be blocked by it.
-	t.Setenv("SHELL", "/bin/nonexistent-shell")
+	t.Setenv(cnfg.ShellOverrideEnv, "/bin/nonexistent-shell")
 
 	msg := saveConfigCmd(filepath.Join(t.TempDir(), "packages"), true)().(setupDoneMsg)
 	if msg.err != nil {

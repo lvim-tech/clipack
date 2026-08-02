@@ -185,9 +185,18 @@ clipack preview bat -f
 clipack add-executables-path        # alias: clipack path
 ```
 
-Appends `bin/` and `man/` to your shell rc file (`.bashrc`, `.zshrc` or
-`config.fish`). Safe to run repeatedly — it skips the write if the path is
-already there.
+Appends `bin/` and `man/` to the startup file of the shell you are running it
+from, and only that one. bash, zsh, ksh, mksh, yash, dash, fish, csh, tcsh,
+nushell, elvish, xonsh and PowerShell are recognised, each written in its own
+syntax. Safe to run repeatedly — it skips the write if the path is already
+there.
+
+The shell is identified from the process that launched clipack rather than from
+`$SHELL`, which names your *login* shell and does not change when you start a
+different one. Set `CLIPACK_SHELL` to override the guess.
+
+Run it again from your other shells: each keeps its own startup file, so each
+needs the line.
 
 ### theme
 

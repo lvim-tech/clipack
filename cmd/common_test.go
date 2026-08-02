@@ -24,7 +24,8 @@ func TestLoadConfigLoadsAnExistingConfiguration(t *testing.T) {
 
 func TestLoadConfigBootstrapsOnFirstRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(os.Getenv("HOME"), ".config"))
+	t.Setenv(cnfg.ShellOverrideEnv, "/bin/bash")
 
 	installDir := filepath.Join(t.TempDir(), "packages")
 	// The trailing "n" declines the shell-configuration prompt.
@@ -67,6 +68,7 @@ func TestLoadConfigRecreatesMissingDirectories(t *testing.T) {
 
 func TestLoadConfigRejectsAnInvalidFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(os.Getenv("HOME"), ".config"))
 
 	dir, err := cnfg.ConfigDir()
 	if err != nil {

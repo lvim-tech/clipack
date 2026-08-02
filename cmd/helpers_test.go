@@ -18,7 +18,8 @@ func setupCmdTest(t *testing.T) *cnfg.Config {
 	t.Helper()
 
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(os.Getenv("HOME"), ".config"))
+	t.Setenv(cnfg.ShellOverrideEnv, "/bin/bash")
 
 	config := cnfg.NewDefaultConfig(filepath.Join(t.TempDir(), "packages"))
 	if err := config.Save(); err != nil {

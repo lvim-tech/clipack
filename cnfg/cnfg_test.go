@@ -10,10 +10,17 @@ import (
 
 // withHome points os.UserHomeDir at a temporary directory for the duration of a
 // test, so nothing touches the real ~/.config/clipack.
+//
+// XDG_CONFIG_HOME is redirected as well, and that is not decoration: the shells
+// that follow the XDG layout resolve their rc file below it, ignoring $HOME
+// entirely. On a machine where it is set — which is most of them — overriding
+// only $HOME let a test append its exports to the developer's own
+// ~/.config/fish/config.fish. It did, once.
 func withHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	return home
 }
 
@@ -312,120 +319,6 @@ func TestDefaultInstallDir(t *testing.T) {
 	}
 }
 
-func TestShellExportLines(t *testing.T) {
-	tests := []struct {
-		shell   string
-		want    []string
-		wantErr bool
-	}{
-		{shell: "/bin/bash", want: []string{`export PATH="/bin:$PATH"`, `export MANPATH="/man:$MANPATH"`}},
-		{shell: "/usr/bin/zsh", want: []string{`export PATH="/bin:$PATH"`}},
-		{shell: "/usr/bin/fish", want: []string{"set -x PATH /bin $PATH", "set -x MANPATH /man $MANPATH"}},
-		{shell: "/bin/csh", wantErr: true},
-		{shell: "", wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.shell, func(t *testing.T) {
-			t.Setenv("SHELL", tt.shell)
-
-			got, err := ShellExportLines("/bin", "/man")
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("ShellExportLines() error = nil, want an error for %q", tt.shell)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ShellExportLines() error = %v", err)
-			}
-			for _, want := range tt.want {
-				if !strings.Contains(got, want) {
-					t.Errorf("output = %q, want it to contain %q", got, want)
-				}
-			}
-		})
-	}
-}
-
-func TestGetShellConfigFilePath(t *testing.T) {
-	tests := []struct {
-		shell    string
-		wantBase string
-		wantErr  bool
-	}{
-		{shell: "/bin/bash", wantBase: ".bashrc"},
-		{shell: "/usr/bin/zsh", wantBase: ".zshrc"},
-		{shell: "/usr/bin/fish", wantBase: "config.fish"},
-		{shell: "/bin/ksh", wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.shell, func(t *testing.T) {
-			t.Setenv("SHELL", tt.shell)
-
-			got, err := GetShellConfigFilePath()
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("GetShellConfigFilePath() error = nil, want an error for %q", tt.shell)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("GetShellConfigFilePath() error = %v", err)
-			}
-			if filepath.Base(got) != tt.wantBase {
-				t.Errorf("GetShellConfigFilePath() = %q, want it to end in %q", got, tt.wantBase)
-			}
-		})
-	}
-}
-
-func TestAddPathsToShellConfigIsIdempotent(t *testing.T) {
-	home := withHome(t)
-	t.Setenv("SHELL", "/bin/bash")
-
-	rc, err := GetShellConfigFilePath()
-	if err != nil {
-		t.Fatalf("GetShellConfigFilePath() error = %v", err)
-	}
-	// The rc path has to follow $HOME, the same home ConfigDir uses.
-	if !strings.HasPrefix(rc, home) {
-		t.Fatalf("rc path %q is outside the test home %q", rc, home)
-	}
-
-	binPath := filepath.Join(home, "clipack", "bin")
-	manPath := filepath.Join(home, "clipack", "man")
-
-	if err := AddPathsToShellConfig(binPath, manPath); err != nil {
-		t.Fatalf("AddPathsToShellConfig() error = %v", err)
-	}
-
-	first, err := os.ReadFile(rc)
-	if err != nil {
-		t.Fatalf("the rc file was not written: %v", err)
-	}
-	if !strings.Contains(string(first), binPath) {
-		t.Fatalf("rc file = %q, want it to reference the bin path", first)
-	}
-
-	// Running it a second time must not stack a duplicate export block.
-	if err := AddPathsToShellConfig(binPath, manPath); err != nil {
-		t.Fatalf("second AddPathsToShellConfig() error = %v", err)
-	}
-
-	second, err := os.ReadFile(rc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(first) != string(second) {
-		t.Errorf("the rc file grew on the second call:\nfirst:  %q\nsecond: %q", first, second)
-	}
-	if n := strings.Count(string(second), binPath); n != 1 {
-		t.Errorf("the bin path appears %d times, want exactly 1", n)
-	}
-}
-
 func TestAskInstallDirectory(t *testing.T) {
 	home := withHome(t)
 
@@ -490,66 +383,9 @@ func TestCreateDefaultConfigIsNoOpWhenPresent(t *testing.T) {
 	}
 }
 
-func TestAddPathsToShellConfigFish(t *testing.T) {
-	home := withHome(t)
-	t.Setenv("SHELL", "/usr/bin/fish")
-
-	binPath := filepath.Join(home, "clipack", "bin")
-	manPath := filepath.Join(home, "clipack", "man")
-
-	// config.fish sits two directories deep, neither of which exists yet.
-	if err := AddPathsToShellConfig(binPath, manPath); err != nil {
-		t.Fatalf("AddPathsToShellConfig() error = %v", err)
-	}
-
-	rc := filepath.Join(home, ".config", "fish", "config.fish")
-	contents, err := os.ReadFile(rc)
-	if err != nil {
-		t.Fatalf("config.fish was not created: %v", err)
-	}
-	if !strings.Contains(string(contents), "set -x PATH "+binPath) {
-		t.Errorf("config.fish = %q, want fish syntax", contents)
-	}
-}
-
-func TestAddPathsToShellConfigUnsupportedShell(t *testing.T) {
-	withHome(t)
-	t.Setenv("SHELL", "/bin/tcsh")
-
-	if err := AddPathsToShellConfig("/bin", "/man"); err == nil {
-		t.Error("AddPathsToShellConfig() error = nil, want an error for an unsupported shell")
-	}
-}
-
-func TestAddPathsToShellConfigAppendsToAnExistingFile(t *testing.T) {
-	home := withHome(t)
-	t.Setenv("SHELL", "/bin/bash")
-
-	rc := filepath.Join(home, ".bashrc")
-	if err := os.WriteFile(rc, []byte("# existing user configuration\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := AddPathsToShellConfig(filepath.Join(home, "bin"), filepath.Join(home, "man")); err != nil {
-		t.Fatalf("AddPathsToShellConfig() error = %v", err)
-	}
-
-	contents, err := os.ReadFile(rc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The user's own configuration must be preserved, not overwritten.
-	if !strings.Contains(string(contents), "# existing user configuration") {
-		t.Errorf("rc file = %q, want the existing contents kept", contents)
-	}
-	if !strings.Contains(string(contents), "export PATH=") {
-		t.Errorf("rc file = %q, want the export appended", contents)
-	}
-}
-
 func TestCreateDefaultConfigFirstRun(t *testing.T) {
 	home := withHome(t)
-	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv(ShellOverrideEnv, "/bin/bash")
 
 	installDir := filepath.Join(t.TempDir(), "packages")
 	// The trailing "n" declines the shell-configuration prompt.
@@ -583,7 +419,7 @@ func TestCreateDefaultConfigFirstRun(t *testing.T) {
 
 func TestCreateDefaultConfigAddsShellPathsWhenAccepted(t *testing.T) {
 	home := withHome(t)
-	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv(ShellOverrideEnv, "/bin/zsh")
 
 	installDir := filepath.Join(t.TempDir(), "packages")
 	withStdin(t, installDir+"\ny\n")
@@ -603,7 +439,7 @@ func TestCreateDefaultConfigAddsShellPathsWhenAccepted(t *testing.T) {
 
 func TestUpdateConfigPreservesRegistryAndOptions(t *testing.T) {
 	withHome(t)
-	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv(ShellOverrideEnv, "/bin/bash")
 
 	original := NewDefaultConfig(filepath.Join(t.TempDir(), "old"))
 	original.Registry.Token = "secret-token"

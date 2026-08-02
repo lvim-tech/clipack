@@ -50,6 +50,14 @@ type Install struct {
 	Configs          []string           `yaml:"configs,omitempty"`
 	Man              []string           `yaml:"man,omitempty"`
 	AdditionalConfig []AdditionalConfig `yaml:"additional-config,omitempty"`
+	// Setup is a shell script clipack runs once, after everything is installed.
+	//
+	// It exists to separate two things that used to share one file. Linking a
+	// theme into ~/.config is done once and is clipack's job; exporting a
+	// variable or calling `eval "$(zoxide init zsh)"` has to happen inside the
+	// user's shell, every time, and no process can do that for its parent. The
+	// first kind belongs here; the second stays in a config.sh that gets sourced.
+	Setup string `yaml:"setup,omitempty"`
 }
 
 // Resource is a directory tree a package needs installed alongside its

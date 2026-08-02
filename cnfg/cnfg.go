@@ -274,7 +274,7 @@ func CreateDefaultConfig() error {
 	}
 
 	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
-		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man); err != nil {
+		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man, IntegrationPath(config.Paths.Configs)); err != nil {
 			return fmt.Errorf("could not add paths to shell configuration: %w", err)
 		}
 	}
@@ -305,7 +305,7 @@ func UpdateConfig() error {
 	fmt.Printf("Configuration updated at: %s\n", path)
 
 	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
-		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man); err != nil {
+		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man, IntegrationPath(config.Paths.Configs)); err != nil {
 			return fmt.Errorf("could not add paths to shell configuration: %w", err)
 		}
 	}

@@ -26,6 +26,15 @@ type Shell struct {
 	// here has its own syntax for it, and three of them cannot express it as a
 	// plain assignment at all.
 	exports func(binPath, manPath string) string
+	// sourcesIntegration marks the shells offered the aggregate that pulls in
+	// each installed package's shell integration.
+	//
+	// Only zsh, and that is a fact about the registry rather than about the
+	// shells. The integrations it ships call `zoxide init zsh`, `atuin init zsh`
+	// and `starship init zsh` — output that is zsh syntax. Sourced from bash it
+	// does not degrade, it breaks the shell, so the line is not offered there
+	// until the registry has something bash can read.
+	sourcesIntegration bool
 }
 
 // shells lists every shell clipack can extend, in no particular order: lookup
@@ -34,7 +43,7 @@ var shells = []Shell{
 	// POSIX-family shells. All of them accept the same two exports; they differ
 	// only in which file they read.
 	{Name: "bash", rc: []string{".bashrc"}, exports: posixExports},
-	{Name: "zsh", rc: []string{".zshrc"}, exports: posixExports},
+	{Name: "zsh", rc: []string{".zshrc"}, exports: posixExports, sourcesIntegration: true},
 	{Name: "ksh", rc: []string{".kshrc"}, exports: posixExports},
 	{Name: "ksh93", rc: []string{".kshrc"}, exports: posixExports},
 	{Name: "loksh", rc: []string{".kshrc"}, exports: posixExports},
@@ -227,19 +236,30 @@ func (s Shell) RCFile() (string, error) {
 }
 
 // ExportLines returns the lines that put binPath and manPath on this shell's
-// path.
-func (s Shell) ExportLines(binPath, manPath string) string {
-	return s.exports(binPath, manPath)
+// path, and — for a shell that can read it — the line that sources the
+// integration aggregate.
+//
+// integration may be empty, which asks for the paths alone.
+func (s Shell) ExportLines(binPath, manPath, integration string) string {
+	lines := s.exports(binPath, manPath)
+	if integration == "" || !s.sourcesIntegration {
+		return lines
+	}
+
+	// One line that never has to change again: the file it points at is
+	// regenerated on every install and remove, so a package added later is
+	// picked up without touching the startup file a second time.
+	return lines + fmt.Sprintf("[ -r %q ] && . %q\n", integration, integration)
 }
 
 // ShellExportLines returns the lines that put bin and man on the current
-// shell's path.
-func ShellExportLines(binPath, manPath string) (string, error) {
+// shell's path, plus the integration line where the shell can read it.
+func ShellExportLines(binPath, manPath, integration string) (string, error) {
 	sh, err := CurrentShell()
 	if err != nil {
 		return "", err
 	}
-	return sh.ExportLines(binPath, manPath), nil
+	return sh.ExportLines(binPath, manPath, integration), nil
 }
 
 // GetShellConfigFilePath returns the startup file of the current shell.
@@ -315,14 +335,28 @@ func onPath(dir string) bool {
 	return false
 }
 
+// IntegrationFile is the aggregate that sources the shell integration of every
+// installed package. It lives here rather than in pkg, which generates it,
+// because this package writes the line that sources it and pkg already imports
+// this one.
+const IntegrationFile = "clipack.sh"
+
+// IntegrationPath is where the aggregate lives for a given configs directory.
+func IntegrationPath(configsDir string) string {
+	return filepath.Join(configsDir, IntegrationFile)
+}
+
 // AddPathsToShell appends the bin and man exports to the current shell's
 // startup file and reports which file it wrote. It is a no-op when the file
 // already references binPath, so running it repeatedly does not stack duplicate
 // exports.
 //
+// integration is the path to the integration aggregate, sourced by the shells
+// that can read it; empty writes the paths alone.
+//
 // Unlike AddPathsToShellConfig it prints nothing, which is what lets the
 // interface call it without writing over its own frame.
-func AddPathsToShell(binPath, manPath string) (ShellStatus, error) {
+func AddPathsToShell(binPath, manPath, integration string) (ShellStatus, error) {
 	status, err := CurrentShellStatus(binPath)
 	if err != nil {
 		return ShellStatus{}, err
@@ -341,7 +375,7 @@ func AddPathsToShell(binPath, manPath string) (ShellStatus, error) {
 	}
 	defer file.Close()
 
-	if _, err := file.WriteString(status.Shell.ExportLines(binPath, manPath)); err != nil {
+	if _, err := file.WriteString(status.Shell.ExportLines(binPath, manPath, integration)); err != nil {
 		return status, fmt.Errorf("could not write to shell config file: %w", err)
 	}
 
@@ -351,7 +385,7 @@ func AddPathsToShell(binPath, manPath string) (ShellStatus, error) {
 
 // AddPathsToShellConfig appends the bin and man paths to the current shell's
 // startup file and reports what it did on stdout. It is the form the CLI uses.
-func AddPathsToShellConfig(binPath, manPath string) error {
+func AddPathsToShellConfig(binPath, manPath, integration string) error {
 	before, err := CurrentShellStatus(binPath)
 	if err != nil {
 		return fmt.Errorf("could not determine shell config file path: %w", err)
@@ -361,7 +395,7 @@ func AddPathsToShellConfig(binPath, manPath string) error {
 		return nil
 	}
 
-	status, err := AddPathsToShell(binPath, manPath)
+	status, err := AddPathsToShell(binPath, manPath, integration)
 	if err != nil {
 		return err
 	}

@@ -268,6 +268,11 @@ func (in *Installer) Install(p *Package, method string) error {
 	}
 	errs = append(errs, in.installPostInstallScripts(p, paths)...)
 
+	// After the manifest, so a setup script can read what was installed, and
+	// after the config files it links to have been written.
+	in.runSetup(p, paths)
+	in.refreshShellIntegration()
+
 	if in.Config.Options.CleanupBuild {
 		if err := os.RemoveAll(paths.Build); err != nil {
 			in.warnf("could not remove build directory: %v", err)
@@ -317,6 +322,10 @@ func (in *Installer) Remove(p *Package) error {
 	if err := os.RemoveAll(paths.Build); err != nil {
 		in.warnf("could not remove build directory: %v", err)
 	}
+
+	// The config directory is gone, so its integration has to leave the
+	// aggregate with it — otherwise every shell would source a missing file.
+	in.refreshShellIntegration()
 
 	in.emit(Event{Kind: EventDone, Package: p.Name,
 		Text: fmt.Sprintf("Successfully removed %s", p.Name)})

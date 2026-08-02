@@ -35,7 +35,7 @@ var addExecutablesPathCmd = &cobra.Command{
 			return nil
 		}
 
-		return cnfg.AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man)
+		return cnfg.AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man, cnfg.IntegrationPath(config.Paths.Configs))
 	},
 }
 

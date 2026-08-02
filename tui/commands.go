@@ -173,7 +173,7 @@ func saveConfigCmd(installDir string, addToShell bool) tea.Cmd {
 			// browse screen offers the same thing again for whichever shell is
 			// running. AddPathsToShell rather than AddPathsToShellConfig because
 			// the latter prints, and printing over a Bubble Tea frame corrupts it.
-			_, _ = cnfg.AddPathsToShell(config.Paths.Bin, config.Paths.Man)
+			_, _ = cnfg.AddPathsToShell(config.Paths.Bin, config.Paths.Man, cnfg.IntegrationPath(config.Paths.Configs))
 		}
 		return setupDoneMsg{config: config}
 	}
@@ -194,7 +194,7 @@ func checkShellPathCmd(config *cnfg.Config) tea.Cmd {
 // Running clipack from a second shell brings the offer back for that shell.
 func addShellPathCmd(config *cnfg.Config) tea.Cmd {
 	return func() tea.Msg {
-		status, err := cnfg.AddPathsToShell(config.Paths.Bin, config.Paths.Man)
+		status, err := cnfg.AddPathsToShell(config.Paths.Bin, config.Paths.Man, cnfg.IntegrationPath(config.Paths.Configs))
 		return shellPathMsg{status: status, err: err}
 	}
 }

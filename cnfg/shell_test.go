@@ -100,7 +100,7 @@ func TestShellExportLines(t *testing.T) {
 		t.Run(tt.shell, func(t *testing.T) {
 			t.Setenv(ShellOverrideEnv, tt.shell)
 
-			got, err := ShellExportLines("/bin", "/man")
+			got, err := ShellExportLines("/bin", "/man", "")
 			if err != nil {
 				t.Fatalf("ShellExportLines() error = %v", err)
 			}
@@ -213,7 +213,7 @@ func TestCurrentShellStatus(t *testing.T) {
 
 	t.Run("asks for a restart when only the rc file has it", func(t *testing.T) {
 		t.Setenv("PATH", "/usr/bin:/bin")
-		if _, err := AddPathsToShell(binPath, filepath.Join(home, "clipack", "man")); err != nil {
+		if _, err := AddPathsToShell(binPath, filepath.Join(home, "clipack", "man"), ""); err != nil {
 			t.Fatalf("AddPathsToShell() error = %v", err)
 		}
 
@@ -251,7 +251,7 @@ func TestAddPathsToShellIsIdempotent(t *testing.T) {
 	binPath := filepath.Join(home, "clipack", "bin")
 	manPath := filepath.Join(home, "clipack", "man")
 
-	status, err := AddPathsToShell(binPath, manPath)
+	status, err := AddPathsToShell(binPath, manPath, "")
 	if err != nil {
 		t.Fatalf("AddPathsToShell() error = %v", err)
 	}
@@ -269,7 +269,7 @@ func TestAddPathsToShellIsIdempotent(t *testing.T) {
 	}
 
 	// Running it a second time must not stack a duplicate export block.
-	if _, err := AddPathsToShell(binPath, manPath); err != nil {
+	if _, err := AddPathsToShell(binPath, manPath, ""); err != nil {
 		t.Fatalf("second AddPathsToShell() error = %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestAddPathsToShellWritesOnlyTheCurrentShell(t *testing.T) {
 	manPath := filepath.Join(home, "clipack", "man")
 
 	t.Setenv(ShellOverrideEnv, "/usr/bin/zsh")
-	if _, err := AddPathsToShell(binPath, manPath); err != nil {
+	if _, err := AddPathsToShell(binPath, manPath, ""); err != nil {
 		t.Fatalf("AddPathsToShell() error = %v", err)
 	}
 
@@ -314,7 +314,7 @@ func TestAddPathsToShellWritesOnlyTheCurrentShell(t *testing.T) {
 		t.Error("NeedsPaths() = false in bash, want true: .bashrc has not been extended")
 	}
 
-	if _, err := AddPathsToShell(binPath, manPath); err != nil {
+	if _, err := AddPathsToShell(binPath, manPath, ""); err != nil {
 		t.Fatalf("AddPathsToShell() from bash error = %v", err)
 	}
 	contents, err := os.ReadFile(filepath.Join(home, ".bashrc"))
@@ -335,7 +335,7 @@ func TestAddPathsToShellCreatesNestedDirectories(t *testing.T) {
 	manPath := filepath.Join(home, "clipack", "man")
 
 	// config.fish sits two directories deep, neither of which exists yet.
-	status, err := AddPathsToShell(binPath, manPath)
+	status, err := AddPathsToShell(binPath, manPath, "")
 	if err != nil {
 		t.Fatalf("AddPathsToShell() error = %v", err)
 	}
@@ -353,7 +353,7 @@ func TestAddPathsToShellConfigUnsupportedShell(t *testing.T) {
 	withHome(t)
 	t.Setenv(ShellOverrideEnv, "/usr/bin/shellwedonotknow")
 
-	if err := AddPathsToShellConfig("/bin", "/man"); err == nil {
+	if err := AddPathsToShellConfig("/bin", "/man", ""); err == nil {
 		t.Error("AddPathsToShellConfig() error = nil, want an error for an unsupported shell")
 	}
 }
@@ -368,7 +368,7 @@ func TestAddPathsToShellAppendsToAnExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := AddPathsToShell(filepath.Join(home, "bin"), filepath.Join(home, "man")); err != nil {
+	if _, err := AddPathsToShell(filepath.Join(home, "bin"), filepath.Join(home, "man"), ""); err != nil {
 		t.Fatalf("AddPathsToShell() error = %v", err)
 	}
 
@@ -382,5 +382,47 @@ func TestAddPathsToShellAppendsToAnExistingFile(t *testing.T) {
 	}
 	if !strings.Contains(string(contents), "export PATH=") {
 		t.Errorf("rc file = %q, want the export appended", contents)
+	}
+}
+
+// TestExportLinesOffersTheAggregateOnlyToZsh pins why sourcesIntegration is a
+// per-shell flag: the integrations the registry ships are zsh syntax, and a
+// bash that sources them does not degrade — it breaks.
+func TestExportLinesOffersTheAggregateOnlyToZsh(t *testing.T) {
+	integration := "/opt/clipack/configs/clipack.sh"
+	sourceLine := `. "` + integration + `"`
+
+	tests := []struct {
+		shell string
+		want  bool
+	}{
+		{shell: "/usr/bin/zsh", want: true},
+		{shell: "/bin/bash", want: false},
+		{shell: "/usr/bin/fish", want: false},
+		{shell: "/bin/tcsh", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			t.Setenv(ShellOverrideEnv, tt.shell)
+
+			got, err := ShellExportLines("/bin", "/man", integration)
+			if err != nil {
+				t.Fatalf("ShellExportLines() error = %v", err)
+			}
+			if strings.Contains(got, sourceLine) != tt.want {
+				t.Errorf("output = %q, want source line present = %v", got, tt.want)
+			}
+		})
+	}
+
+	// No integration path means no line, even for zsh.
+	t.Setenv(ShellOverrideEnv, "/usr/bin/zsh")
+	got, err := ShellExportLines("/bin", "/man", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "clipack.sh") {
+		t.Errorf("output = %q, want no source line without an aggregate path", got)
 	}
 }

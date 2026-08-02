@@ -111,7 +111,7 @@ func TestShellNoticeAsksForARestartOnceWritten(t *testing.T) {
 
 	t.Setenv(cnfg.ShellOverrideEnv, "/bin/bash")
 	t.Setenv("PATH", "/usr/bin:/bin")
-	if _, err := cnfg.AddPathsToShell(m.config.Paths.Bin, m.config.Paths.Man); err != nil {
+	if _, err := cnfg.AddPathsToShell(m.config.Paths.Bin, m.config.Paths.Man, ""); err != nil {
 		t.Fatalf("AddPathsToShell() error = %v", err)
 	}
 

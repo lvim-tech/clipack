@@ -417,6 +417,7 @@ install:
 | `install.configs` | Files copied from the build tree into `configs/<name>/`. |
 | `install.man` | Man pages; the extension picks the section (`.1` → `man1/`). |
 | `install.additional-config` | Files written into `configs/<name>/`. A value starting with `http://` or `https://` is downloaded; anything else is used literally. `.sh` files are made executable. |
+| `install.setup` | A shell script clipack **runs once**, after the install completes — for linking a theme into `~/.config` and other one-off arrangements. Failure is a warning, not an error. See below. |
 | `install.environment` | Extra environment variables for the build. |
 | `post-install.scripts` | Scripts written into `bin/` and made executable. |
 
@@ -488,6 +489,30 @@ right for one of them.
 Only `opensuse` is defined. Another distribution gets its own key when someone
 has verified the names on one — a guessed package name is worse than no list,
 because it fails after the user has already trusted it.
+
+**Setup and shell integration**
+
+A package needs two different kinds of glue, and they used to share one file:
+
+- **One-off arrangement** — linking a theme into `~/.config`, creating a
+  directory. This belongs in `install.setup`: clipack runs it once, at the end
+  of the install, from the base directory. Nothing has to be sourced.
+- **Shell integration** — `eval "$(zoxide init zsh)"`, exported variables,
+  functions. No process can set these in your shell for you; they live in a
+  `config.sh` under `configs/<name>/`, delivered via `additional-config`.
+
+clipack maintains `configs/clipack.sh`, an aggregate that sources the
+`config.sh` of everything currently installed. It is regenerated on every
+install and remove, so it never references a removed package. Your startup file
+needs exactly one line, once:
+
+```sh
+source "$HOME/clipack/configs/clipack.sh"
+```
+
+When clipack writes your rc file (setup, `p`, `add-executables-path`), it adds
+that line itself — for zsh only, because the integrations the registry ships
+are zsh syntax and would break a bash that sourced them.
 
 **Desktop entries**
 

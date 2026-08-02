@@ -236,6 +236,16 @@ func (in *Installer) ResolveMethod(method string) string {
 // Install builds and installs a package. Existing build directories are removed
 // without prompting; callers confirm beforehand.
 func (in *Installer) Install(p *Package, method string) error {
+	return in.install(p, method, nil)
+}
+
+// install is the shared implementation. previous, when set, is the manifest of
+// the version being replaced — and it is cleaned up only AFTER the build has
+// succeeded. Cleaning first read better, but it meant a failed build left the
+// package uninstalled: the working version's binaries were already gone by the
+// time the compiler said no. A ghostty update died on a compiler-version check
+// and took the installed ghostty with it; staging is what that cost.
+func (in *Installer) install(p *Package, method string, previous *Package) error {
 	method = in.ResolveMethod(method)
 	paths := in.pathsFor(p.Name)
 
@@ -253,6 +263,19 @@ func (in *Installer) Install(p *Package, method string) error {
 
 	if err := in.runSteps(p, method, paths.Build); err != nil {
 		return err
+	}
+
+	// Only now, with a finished build in hand, does the previous version go.
+	// The window where neither version is installed shrinks from the whole
+	// build to the copy steps below.
+	if previous != nil {
+		in.removeArtifacts(previous, paths)
+		if err := os.RemoveAll(paths.Config); err != nil {
+			in.warnf("could not remove config directory: %v", err)
+		}
+		if err := utils.EnsureDirectoryExists(paths.Config); err != nil {
+			return fmt.Errorf("recreating config directory: %w", err)
+		}
 	}
 
 	var errs []error
@@ -295,17 +318,15 @@ func (in *Installer) Update(p *Package, method string) error {
 	method = in.ResolveMethod(method)
 	paths := in.pathsFor(p.Name)
 
-	// Read the old manifest BEFORE deleting the config directory. The previous
-	// implementation removed the directory first, so this cleanup never ran.
-	if previous, err := in.readManifest(paths); err == nil {
-		in.removeArtifacts(previous, paths)
+	// The old manifest is read here but acted on only after the new build
+	// succeeds — install() does the cleanup at that point. Nothing of the
+	// working version is touched before there is something to replace it with.
+	previous, err := in.readManifest(paths)
+	if err != nil {
+		previous = nil
 	}
 
-	if err := os.RemoveAll(paths.Config); err != nil {
-		in.warnf("could not remove config directory: %v", err)
-	}
-
-	return in.Install(p, method)
+	return in.install(p, method, previous)
 }
 
 // Remove uninstalls a package based on its installed manifest.

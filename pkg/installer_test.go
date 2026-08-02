@@ -905,3 +905,50 @@ func TestRemoveRefusesAnInvalidResourceTargetInsteadOfDeleting(t *testing.T) {
 		t.Fatal("the bin directory was deleted by a malformed resource target")
 	}
 }
+
+// TestFailedUpdateKeepsThePreviousInstall is the staged-install guarantee. The
+// old ordering removed the working version's artifacts before the build ran, so
+// an update that died in the compiler left the package uninstalled — a ghostty
+// update failed on a compiler-version check and took the installed ghostty with
+// it. Now nothing of the previous version is touched until a build has
+// succeeded.
+func TestFailedUpdateKeepsThePreviousInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shell syntax under test is POSIX")
+	}
+
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	if err := in.Install(resourcePackage(), MethodVersion); err != nil {
+		t.Fatalf("installing v1: %v", err)
+	}
+
+	broken := &Package{
+		Name:    "demo",
+		Version: "v2.0.0",
+		Install: Install{
+			Steps:    []string{"echo about to fail", "exit 1"},
+			Binaries: []string{"out/demo"},
+		},
+	}
+	if err := in.Update(broken, MethodVersion); err == nil {
+		t.Fatal("Update() succeeded despite the failing build")
+	}
+
+	// The working version has to still be there, whole: binary, resource tree,
+	// and the manifest that says it is installed.
+	if !exists(filepath.Join(config.Paths.Bin, "demo")) {
+		t.Error("the previous binary was removed by a failed update")
+	}
+	if !exists(filepath.Join(config.Paths.Base, "lib", "demo", "core.so")) {
+		t.Error("the previous resource tree was removed by a failed update")
+	}
+	installed, err := InstalledMap(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := installed["demo"]; !ok || p.Version != "v1.0.0" {
+		t.Errorf("installed = %v, want v1.0.0 still recorded", installed["demo"])
+	}
+}

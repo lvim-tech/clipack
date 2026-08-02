@@ -41,6 +41,14 @@ type setupDoneMsg struct {
 	err    error
 }
 
+// shellPathMsg carries where the shell clipack was started from stands with
+// respect to the managed bin directory. A shell clipack cannot write to is not
+// an error worth showing: err simply suppresses the offer.
+type shellPathMsg struct {
+	status cnfg.ShellStatus
+	err    error
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -161,10 +169,32 @@ func saveConfigCmd(installDir string, addToShell bool) tea.Cmd {
 			return setupDoneMsg{err: err}
 		}
 		if addToShell {
-			// A failure here is not fatal: the config is already usable, the
-			// user just has to extend PATH themselves.
-			_ = cnfg.AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man)
+			// A failure here is not fatal: the config is already usable, and the
+			// browse screen offers the same thing again for whichever shell is
+			// running. AddPathsToShell rather than AddPathsToShellConfig because
+			// the latter prints, and printing over a Bubble Tea frame corrupts it.
+			_, _ = cnfg.AddPathsToShell(config.Paths.Bin, config.Paths.Man)
 		}
 		return setupDoneMsg{config: config}
+	}
+}
+
+// checkShellPathCmd asks whether the current shell can find the managed bin
+// directory. It runs as a command rather than in the constructor so the model
+// stays a pure value: nothing is read from the environment or the disk until
+// Bubble Tea starts.
+func checkShellPathCmd(config *cnfg.Config) tea.Cmd {
+	return func() tea.Msg {
+		status, err := cnfg.CurrentShellStatus(config.Paths.Bin)
+		return shellPathMsg{status: status, err: err}
+	}
+}
+
+// addShellPathCmd extends the current shell's startup file, and only that one.
+// Running clipack from a second shell brings the offer back for that shell.
+func addShellPathCmd(config *cnfg.Config) tea.Cmd {
+	return func() tea.Msg {
+		status, err := cnfg.AddPathsToShell(config.Paths.Bin, config.Paths.Man)
+		return shellPathMsg{status: status, err: err}
 	}
 }

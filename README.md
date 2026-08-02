@@ -73,6 +73,7 @@ Run `clipack` with no arguments:
 | | *a package offers install, or update and remove — never both* |
 | `m` | toggle between the `version` and `commit` install method |
 | `r` | refresh the registry cache |
+| `p` | add `bin/` to the current shell's startup file — offered only while that shell cannot find it |
 | `/` | filter by name, description, category or tag |
 | `pgup` / `pgdn` | page the focused pane |
 | `?` | expanded help |
@@ -196,7 +197,8 @@ The shell is identified from the process that launched clipack rather than from
 different one. Set `CLIPACK_SHELL` to override the guess.
 
 Run it again from your other shells: each keeps its own startup file, so each
-needs the line.
+needs the line. The interface offers the same thing — a warning and a `p` key —
+whenever the shell it is running under cannot find `bin/`.
 
 ### theme
 

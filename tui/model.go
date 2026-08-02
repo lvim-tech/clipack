@@ -165,6 +165,15 @@ type Model struct {
 	// Setup wizard.
 	setupAddShell bool
 
+	// shellStatus is where the shell clipack was started from stands with
+	// respect to the managed bin directory, and shellKnown whether that could be
+	// determined at all — a shell clipack cannot write to gets no warning,
+	// because there would be no key to fix it with. Filled in by a command after
+	// startup, so a model built in a test says nothing about the machine it runs
+	// on until it is told.
+	shellStatus cnfg.ShellStatus
+	shellKnown  bool
+
 	// listOffset is the index of the first entry drawn in the list pane, and
 	// listHeight the pane's inner height. Entries have individual heights, so
 	// the scroll position is tracked here rather than by bubbles' paginator.
@@ -276,7 +285,7 @@ func (m Model) Init() tea.Cmd {
 	if m.screen == screenSetup {
 		return tea.Batch(textinput.Blink, m.spinner.Tick)
 	}
-	return tea.Batch(m.spinner.Tick, loadRegistryCmd(m.config, false))
+	return tea.Batch(m.spinner.Tick, loadRegistryCmd(m.config, false), checkShellPathCmd(m.config))
 }
 
 // Update implements tea.Model. It dispatches to a per-screen handler after
@@ -299,6 +308,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case setupDoneMsg:
 		return m.handleSetupDone(msg)
+
+	case shellPathMsg:
+		return m.handleShellPath(msg)
 
 	case registryLoadedMsg:
 		return m.handleRegistryLoaded(msg)
@@ -468,7 +480,35 @@ func (m Model) handleSetupDone(msg setupDoneMsg) (tea.Model, tea.Cmd) {
 	m.method = msg.config.Options.InstallMethod
 	m.screen = screenLoading
 	m.status = "Loading registry…"
-	return m, tea.Batch(m.spinner.Tick, loadRegistryCmd(m.config, false))
+	return m, tea.Batch(m.spinner.Tick, loadRegistryCmd(m.config, false), checkShellPathCmd(m.config))
+}
+
+// handleShellPath records the state of the current shell's PATH, whether that
+// came from the check at startup or from having just written the rc file.
+//
+// The layout is recomputed because the warning is a header line: without this
+// the body stays sized for the taller header and the view is one line short —
+// the same failure the help line had when it changed height.
+func (m Model) handleShellPath(msg shellPathMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		// An unknown shell is not reported. There is nothing the user could
+		// press, and clipack has no business editing a file whose syntax it
+		// cannot write.
+		m.shellKnown = false
+		m.layout()
+		return m, nil
+	}
+
+	added := m.shellStatus.NeedsPaths() && !msg.status.NeedsPaths()
+
+	m.shellStatus = msg.status
+	m.shellKnown = true
+	if added {
+		m.status = fmt.Sprintf("%s added to %s — restart %s to pick it up",
+			m.config.Paths.Bin, msg.status.RCFile, msg.status.Shell.Name)
+	}
+	m.layout()
+	return m, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -785,7 +825,22 @@ func (m Model) contextualKeys() keyMap {
 	keys.Yank.SetEnabled(inDetail)
 	keys.Filter.SetEnabled(!inDetail)
 
+	// Offered only while there is something to fix, and named after the shell
+	// it will write to: "p add to zsh" says which of your shells this is about,
+	// which matters precisely because the answer differs per shell.
+	keys.Path.SetEnabled(m.needsShellPath())
+	if m.needsShellPath() {
+		keys.Path.SetHelp("p", "add to "+m.shellStatus.Shell.Name)
+	}
+
 	return keys
+}
+
+// needsShellPath reports whether the warning and its key belong on screen: the
+// shell is one clipack can write to, and neither its PATH nor its startup file
+// mentions the managed bin directory.
+func (m Model) needsShellPath() bool {
+	return m.shellKnown && m.shellStatus.NeedsPaths()
 }
 
 // selected returns the highlighted package, if any.
@@ -890,6 +945,15 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.method = otherMethod(m.method)
 			m.status = "Global install method: " + m.method
+			return m, nil
+
+		case key.Matches(keyMsg, m.keys.Path):
+			// Guarded rather than always bound: p is otherwise a free key, and
+			// silently rewriting an rc file that is already correct is the kind
+			// of thing that stacks duplicate exports.
+			if m.needsShellPath() {
+				return m, addShellPathCmd(m.config)
+			}
 			return m, nil
 
 		case key.Matches(keyMsg, m.keys.Refresh):

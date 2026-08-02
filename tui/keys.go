@@ -42,11 +42,15 @@ type keyMap struct {
 	Remove   key.Binding
 	Refresh  key.Binding
 	Method   key.Binding
-	Filter   key.Binding
-	Confirm  key.Binding
-	Cancel   key.Binding
-	Help     key.Binding
-	Quit     key.Binding
+	// Path extends the current shell's startup file. It is enabled only while
+	// that shell cannot find the managed bin directory, so it appears in the
+	// help exactly when the warning above it is on screen.
+	Path    key.Binding
+	Filter  key.Binding
+	Confirm key.Binding
+	Cancel  key.Binding
+	Help    key.Binding
+	Quit    key.Binding
 }
 
 // defaultKeys returns the standard binding set.
@@ -127,6 +131,10 @@ func defaultKeys() keyMap {
 			key.WithKeys("m"),
 			key.WithHelp("m", "version/commit"),
 		),
+		Path: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "add bin to PATH"),
+		),
 		Filter: key.NewBinding(
 			key.WithKeys("/"),
 			key.WithHelp("/", "filter"),
@@ -162,6 +170,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 		k.Install, k.Update, k.Remove,
 		k.Visual, k.Yank,
 		k.Filter, k.Refresh, k.Method,
+		k.Path,
 		k.Help, k.Quit,
 	}
 }
@@ -171,7 +180,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.FocusLeft, k.FocusRight},
 		{k.Tab, k.ShiftTab, k.Filter, k.Refresh},
-		{k.Check, k.CheckAll, k.Method},
+		{k.Check, k.CheckAll, k.Method, k.Path},
 		{k.Install, k.Update, k.Remove},
 		{k.Visual, k.Yank, k.Help, k.Quit},
 	}

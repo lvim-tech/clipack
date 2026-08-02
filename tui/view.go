@@ -215,10 +215,54 @@ func (m Model) header() string {
 	// the header can never be wider than the terminal.
 	clip := m.clipStyle()
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	lines := []string{
 		clip.Render(title),
 		clip.Render(lipgloss.JoinHorizontal(lipgloss.Bottom, tabs...)),
-	)
+	}
+	if notice, ok := m.shellNotice(); ok {
+		lines = append(lines, clip.Render(notice))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// shellNotice renders the line that says the shell clipack is running under
+// cannot find the packages it installs.
+//
+// It is deliberately about one shell — the current one. A user who runs clipack
+// from zsh and later from fish has two startup files to extend, and each shell
+// is told about its own, from inside it, rather than clipack guessing at files
+// for shells the user may not even have.
+func (m Model) shellNotice() (string, bool) {
+	if !m.shellKnown || m.config == nil {
+		return "", false
+	}
+
+	s := m.styles
+	name := m.shellStatus.Shell.Name
+	narrow := m.contentWidth() < 72
+
+	switch {
+	case m.shellStatus.NeedsPaths():
+		if narrow {
+			return s.Err.Render(fmt.Sprintf("%s %s: press p to add bin to PATH", s.Icons.Warn, name)), true
+		}
+		return s.Err.Render(fmt.Sprintf("%s %s cannot find %s — press p to add it to %s",
+			s.Icons.Warn, name, m.config.Paths.Bin, m.shellStatus.RCFile)), true
+
+	case m.shellStatus.NeedsRestart():
+		// The file is already right and only this session is behind. Saying so
+		// in muted text rather than red is the difference between "you have
+		// something to do" and "you did it, restart the shell" — without it the
+		// warning looks like the key did nothing.
+		if narrow {
+			return s.Muted.Render(fmt.Sprintf("%s restart %s to pick up bin", s.Icons.Bullet, name)), true
+		}
+		return s.Muted.Render(fmt.Sprintf("%s %s references %s — restart %s to pick it up",
+			s.Icons.Bullet, m.shellStatus.RCFile, m.config.Paths.Bin, name)), true
+	}
+
+	return "", false
 }
 
 // footer renders the status line and the help line.

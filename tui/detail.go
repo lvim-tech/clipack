@@ -10,7 +10,7 @@ import (
 
 // renderDetail builds the right-hand pane for a package. width is the usable
 // inner width of the pane, so long values wrap instead of breaking the layout.
-func renderDetail(entry packageItem, width int, s Styles) string {
+func renderDetail(entry packageItem, method string, width int, s Styles) string {
 	if width < 20 {
 		width = 20
 	}
@@ -56,8 +56,14 @@ func renderDetail(entry packageItem, width int, s Styles) string {
 	}
 	// Which ref this package is pinned to locally. It is per package: the
 	// header's method is only the default a fresh install starts from.
+	//
+	// A package that is not installed shows what its next install would use,
+	// which is the only place the choice made with m is visible before the
+	// confirmation appears.
 	if entry.installed != nil {
 		row("Install method", installedRefMethod(entry))
+	} else if method != "" {
+		row("Installs from", fmt.Sprintf("%s: %s", method, p.Ref(method)))
 	}
 
 	b.WriteString("\n")

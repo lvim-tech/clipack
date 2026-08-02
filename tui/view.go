@@ -336,9 +336,10 @@ func (m Model) viewConfirm() string {
 
 	switch m.pending {
 	case actionInstall:
+		method := m.methodOf(entry.pkg.Name)
 		lines = append(lines,
-			s.Muted.Render("method  ")+m.method,
-			s.Muted.Render("ref     ")+entry.pkg.Ref(m.method),
+			s.Muted.Render("method  ")+method,
+			s.Muted.Render("ref     ")+entry.pkg.Ref(method),
 			"",
 			s.Muted.Render("The package is built from source in"),
 			wrap.Render(s.Muted.Render(m.config.Paths.Build)),
@@ -462,7 +463,10 @@ func (m Model) batchLine(entry packageItem) string {
 		method := installedMethod(entry, m.method)
 		return name + s.Muted.Render(entry.installed.Ref(method)+" → ") + entry.pkg.Ref(method)
 	case actionInstall:
-		return name + s.Muted.Render(entry.pkg.Ref(m.method))
+		// Each package's own method, because a batch can mix them: the ref shown
+		// has to be the one that package will actually be built from.
+		method := m.methodOf(entry.pkg.Name)
+		return name + s.Muted.Render(method+" "+entry.pkg.Ref(method))
 	default:
 		return name
 	}

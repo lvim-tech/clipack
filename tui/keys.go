@@ -45,7 +45,13 @@ type keyMap struct {
 	Reinstall key.Binding
 	Remove    key.Binding
 	Refresh   key.Binding
-	Method    key.Binding
+	// Method acts on the selected package, MethodGlobal on the default a fresh
+	// install starts from. They used to be one key whose meaning changed with
+	// the tab, which left no way to choose a method for a single package that
+	// was not installed yet: in that tab the key moved the global default, so
+	// picking commit for one package picked it for every package.
+	Method       key.Binding
+	MethodGlobal key.Binding
 	// Path extends the current shell's startup file. It is enabled only while
 	// that shell cannot find the managed bin directory, so it appears in the
 	// help exactly when the warning above it is on screen.
@@ -139,6 +145,10 @@ func defaultKeys() keyMap {
 			key.WithKeys("m"),
 			key.WithHelp("m", "version/commit"),
 		),
+		MethodGlobal: key.NewBinding(
+			key.WithKeys("M"),
+			key.WithHelp("M", "global method"),
+		),
 		Path: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "add bin to PATH"),
@@ -177,7 +187,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 		k.Check, k.CheckAll,
 		k.Install, k.Update, k.Reinstall, k.Remove,
 		k.Visual, k.Yank,
-		k.Filter, k.Refresh, k.Method,
+		k.Filter, k.Refresh, k.Method, k.MethodGlobal,
 		k.Path,
 		k.Help, k.Quit,
 	}
@@ -188,7 +198,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.FocusLeft, k.FocusRight},
 		{k.Tab, k.ShiftTab, k.Filter, k.Refresh},
-		{k.Check, k.CheckAll, k.Method, k.Path},
+		{k.Check, k.CheckAll, k.Method, k.MethodGlobal, k.Path},
 		{k.Install, k.Update, k.Reinstall, k.Remove},
 		{k.Visual, k.Yank, k.Help, k.Quit},
 	}

@@ -14,8 +14,15 @@ func bufferModel(t *testing.T, lines ...string) Model {
 	t.Helper()
 
 	m := browseModel(t)
-	m.detailBuf = newDetailBuffer(strings.Join(lines, "\n"))
 	m.focus = focusDetail
+	// Lay out once with the focus already moved, then plant the buffer. The help
+	// line lists different keys for each pane, so the first message after a focus
+	// change can find the footer a different height and re-lay-out — and layout
+	// rebuilds the detail buffer from the selected package, discarding whatever a
+	// test put there.
+	m.layout()
+
+	m.detailBuf = newDetailBuffer(strings.Join(lines, "\n"))
 	m.cursor, m.anchor, m.visual = pos{}, pos{}, visualNone
 	return m
 }
@@ -204,8 +211,10 @@ func TestCharwiseSelectionStopsAtTheRealEndOfLine(t *testing.T) {
 	padded := lipgloss.NewStyle().Width(60).Render("Homepage      https://github.com/atuinsh/atuin")
 
 	m := browseModel(t)
-	m.detailBuf = newDetailBuffer(padded)
 	m.focus = focusDetail
+	m.layout()
+
+	m.detailBuf = newDetailBuffer(padded)
 	m.cursor = pos{0, 14}
 	m = applyMsg(t, m, keyMsg("v"))
 	m = applyMsg(t, m, keyMsg("$"))
@@ -407,6 +416,8 @@ func TestYankSummary(t *testing.T) {
 func TestSwitchingPackageClearsTheSelection(t *testing.T) {
 	m := browseModel(t)
 	m.focus = focusDetail
+	m.layout()
+
 	m = applyMsg(t, m, keyMsg("V"))
 	m = applyMsg(t, m, keyMsg("j"))
 

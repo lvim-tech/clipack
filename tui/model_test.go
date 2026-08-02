@@ -270,20 +270,92 @@ func TestTabCyclesThroughViews(t *testing.T) {
 	}
 }
 
-func TestMethodToggle(t *testing.T) {
+func TestGlobalMethodToggle(t *testing.T) {
 	m := browseModel(t)
 
-	m = applyMsg(t, m, keyMsg("m"))
+	m = applyMsg(t, m, keyMsg("M"))
 	if m.method != pkg.MethodCommit {
-		t.Errorf("method = %q after m, want commit", m.method)
+		t.Errorf("method = %q after M, want commit", m.method)
 	}
 	if !strings.Contains(m.status, pkg.MethodCommit) {
 		t.Errorf("status = %q, want it to report the new method", m.status)
 	}
 
-	m = applyMsg(t, m, keyMsg("m"))
+	m = applyMsg(t, m, keyMsg("M"))
 	if m.method != pkg.MethodVersion {
-		t.Errorf("method = %q after a second m, want version", m.method)
+		t.Errorf("method = %q after a second M, want version", m.method)
+	}
+}
+
+// TestMethodChoiceIsPerPackage is the point of splitting the key in two: before
+// it, choosing commit for one package that was not installed yet meant choosing
+// it for every package, because the only method there was the global one.
+func TestMethodChoiceIsPerPackage(t *testing.T) {
+	m := browseModel(t)
+	m = selectPackage(t, m, "bat")
+
+	m = applyMsg(t, m, keyMsg("m"))
+	if got := m.methodOf("bat"); got != pkg.MethodCommit {
+		t.Errorf("methodOf(bat) = %q after m, want commit", got)
+	}
+	if m.method != pkg.MethodVersion {
+		t.Errorf("global method = %q, want it untouched by m", m.method)
+	}
+	if got := m.methodOf("yazi"); got != pkg.MethodVersion {
+		t.Errorf("methodOf(yazi) = %q, want the other packages left on the default", got)
+	}
+	if !strings.Contains(m.status, "bat") || !strings.Contains(m.status, pkg.MethodCommit) {
+		t.Errorf("status = %q, want it to name the package and the method", m.status)
+	}
+
+	// Pressing it again returns the package to the default rather than storing a
+	// second, equal value — which is what lets M move it again.
+	m = applyMsg(t, m, keyMsg("m"))
+	if got := m.methodOf("bat"); got != pkg.MethodVersion {
+		t.Errorf("methodOf(bat) = %q after a second m, want version", got)
+	}
+	if _, pinned := m.methodFor["bat"]; pinned {
+		t.Error("the package is still pinned after returning to the default")
+	}
+}
+
+// TestPerPackageMethodSurvivesTheGlobalToggle keeps the two keys apart: a choice
+// made deliberately for one package must not follow the default around.
+func TestPerPackageMethodSurvivesTheGlobalToggle(t *testing.T) {
+	m := browseModel(t)
+	m = selectPackage(t, m, "bat")
+	m = applyMsg(t, m, keyMsg("m"))
+
+	m = applyMsg(t, m, keyMsg("M"))
+	if m.method != pkg.MethodCommit {
+		t.Fatalf("global method = %q after M, want commit", m.method)
+	}
+	if got := m.methodOf("bat"); got != pkg.MethodCommit {
+		t.Errorf("methodOf(bat) = %q, want its own choice kept", got)
+	}
+
+	m = applyMsg(t, m, keyMsg("M"))
+	if got := m.methodOf("bat"); got != pkg.MethodCommit {
+		t.Errorf("methodOf(bat) = %q after the default moved back, want the choice kept", got)
+	}
+}
+
+// TestMethodOnAnInstalledPackageStillRepins covers the other half of the key: an
+// installed package has a manifest, so m means a rebuild onto the other ref and
+// asks before doing it.
+func TestMethodOnAnInstalledPackageStillRepins(t *testing.T) {
+	m := browseModel(t)
+	m = selectPackage(t, m, "fzf")
+
+	m = applyMsg(t, m, keyMsg("m"))
+	if m.screen != screenConfirm {
+		t.Fatalf("screen = %v, want the switch confirmed first (status: %q)", m.screen, m.status)
+	}
+	if m.pending != actionSwitchMethod {
+		t.Errorf("pending = %v, want actionSwitchMethod", m.pending)
+	}
+	if len(m.methodFor) != 0 {
+		t.Errorf("methodFor = %v, want an installed package to be repinned rather than marked", m.methodFor)
 	}
 }
 
@@ -1082,8 +1154,12 @@ func TestHelpOffersTheInstallMethodToggle(t *testing.T) {
 	m := browseModel(t)
 
 	// The header shows the method but said nothing about how to change it, and
-	// the key was only in the expanded help.
-	if !strings.Contains(helpFor(m), "global method") {
-		t.Errorf("collapsed help = %q, want it to offer the method toggle", helpFor(m))
+	// the key was only in the expanded help. Both keys are listed, and each says
+	// what it will do rather than only that it exists.
+	help := helpFor(m)
+	for _, want := range []string{"m install as commit", "M global: commit"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("collapsed help = %q, want it to contain %q", help, want)
+		}
 	}
 }

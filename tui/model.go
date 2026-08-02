@@ -155,6 +155,12 @@ type Model struct {
 	checked    map[string]bool
 	lastFilter string
 
+	// methodFor overrides the install method for one package, before it is
+	// installed. Until it exists on disk there is no manifest to record a pin
+	// in, so the choice lives here for the session — the same place, and the
+	// same lifetime, as the marks above.
+	methodFor map[string]string
+
 	// Pending confirmation. pendingBatch is what the action will actually run
 	// on; pendingSkipped names the marked packages it does not apply to.
 	pending        action
@@ -269,6 +275,7 @@ func NewWithStyles(config *cnfg.Config, styles Styles, themeErr error) Model {
 		method:        pkg.MethodVersion,
 		setupAddShell: true,
 		checked:       map[string]bool{},
+		methodFor:     map[string]string{},
 	}
 
 	if config == nil {
@@ -627,7 +634,7 @@ func (m *Model) refreshDetail() {
 		return
 	}
 
-	m.detailBuf = newDetailBuffer(renderDetail(entry, m.detail.Width, m.styles))
+	m.detailBuf = newDetailBuffer(renderDetail(entry, m.methodOf(entry.pkg.Name), m.detail.Width, m.styles))
 	// A new package means a new buffer, so any selection into the old one is
 	// meaningless.
 	m.cursor, m.anchor, m.visual = pos{}, pos{}, visualNone
@@ -824,16 +831,18 @@ func (m Model) contextualKeys() keyMap {
 		}
 	}
 
-	// m repins one package in the Installed tab and changes the global default
-	// everywhere else, so the label has to say which.
-	if m.tab == tabInstalled {
-		keys.Method.SetEnabled(installed)
-		if installed {
-			keys.Method.SetHelp("m", "switch to "+otherMethod(installedMethod(entry, m.method)))
-		}
-	} else {
-		keys.Method.SetHelp("m", "global method")
+	// m always means the selected package and M always the default, in every
+	// tab. What m does still differs by state — an installed package is repinned
+	// and rebuilt, one that is not is merely marked for its next install — so the
+	// label says which, and says it in the same words the confirmation will.
+	keys.Method.SetEnabled(ok)
+	switch {
+	case installed:
+		keys.Method.SetHelp("m", "switch to "+otherMethod(installedMethod(entry, m.method)))
+	case ok:
+		keys.Method.SetHelp("m", "install as "+otherMethod(m.methodOf(entry.pkg.Name)))
 	}
+	keys.MethodGlobal.SetHelp("M", "global: "+otherMethod(m.method))
 
 	// Selecting and copying belong to the detail pane; filtering to the list.
 	keys.Visual.SetEnabled(inDetail)
@@ -951,13 +960,13 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(keyMsg, m.keys.Method):
-			// In the Installed tab m repins the package under the cursor.
-			// Everywhere else it changes the global default, which is what a
-			// fresh install uses — the same "the tab decides" rule as the
-			// checkboxes.
-			if m.tab == tabInstalled {
-				return m.requestSwitchMethod()
-			}
+			return m.toggleMethod()
+
+		case key.Matches(keyMsg, m.keys.MethodGlobal):
+			// Only the default for packages with no choice of their own. An
+			// existing per-package choice is left alone: it was made
+			// deliberately, and having it follow the default would make the two
+			// keys the same key again.
 			m.method = otherMethod(m.method)
 			m.status = "Global install method: " + m.method
 			return m, nil
@@ -1338,7 +1347,6 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 // startOperation kicks off the pending action in the background.
 func (m Model) startOperation() (tea.Model, tea.Cmd) {
 	act := m.pending
-	method := m.method
 	switchTo := m.pendingMethod
 
 	batch := m.pendingBatch
@@ -1346,6 +1354,14 @@ func (m Model) startOperation() (tea.Model, tea.Cmd) {
 	if len(batch) == 0 {
 		batch = []packageItem{m.pendingItem}
 		target = m.pendingItem.pkg.Name
+	}
+
+	// Resolve every package's method here rather than inside the operation: the
+	// operation runs on another goroutine, and a batch install must use the
+	// choice each package had when it was confirmed, not one value for all.
+	methods := make(map[string]string, len(batch))
+	for _, entry := range batch {
+		methods[entry.pkg.Name] = m.methodOf(entry.pkg.Name)
 	}
 
 	op := func(in *pkg.Installer) error {
@@ -1361,12 +1377,12 @@ func (m Model) startOperation() (tea.Model, tea.Cmd) {
 			case actionInstall:
 				// The installer stamps the method onto the package it is given,
 				// so it gets a copy rather than the cached registry entry.
-				err = in.Install(clonePackage(entry.pkg), method)
+				err = in.Install(clonePackage(entry.pkg), methods[entry.pkg.Name])
 			case actionUpdate, actionReinstall:
 				// Update is the rebuild. A reinstall differs only in that the ref
 				// it rebuilds to is the one already installed, so nothing here
 				// has to tell them apart.
-				err = in.Update(clonePackage(entry.pkg), installedMethod(entry, method))
+				err = in.Update(clonePackage(entry.pkg), installedMethod(entry, methods[entry.pkg.Name]))
 			case actionRemove:
 				// Remove works from the installed manifest, the only record of
 				// what was actually put on disk.
@@ -1411,6 +1427,53 @@ func (m Model) startOperation() (tea.Model, tea.Cmd) {
 	m.logView.SetContent("")
 
 	return m, tea.Batch(m.spinner.Tick, waitForEventCmd(m.stream))
+}
+
+// toggleMethod switches the method of the selected package: a rebuild onto the
+// other ref when it is installed, a choice for its next install when it is not.
+//
+// The two are separate because only one of them touches the disk. Repinning an
+// installed package means deleting and rebuilding it, which is worth a
+// confirmation; choosing what a future install will use costs nothing and is
+// undone by pressing the key again.
+func (m Model) toggleMethod() (tea.Model, tea.Cmd) {
+	entry, ok := m.selected()
+	if !ok {
+		m.status = "Nothing selected"
+		return m, nil
+	}
+
+	if entry.installed != nil {
+		return m.requestSwitchMethod()
+	}
+
+	name := entry.pkg.Name
+	chosen := otherMethod(m.methodOf(name))
+	if chosen == m.method {
+		// Back to the default: dropping the entry rather than storing a value
+		// equal to the default is what makes the package follow M again.
+		delete(m.methodFor, name)
+	} else {
+		m.methodFor[name] = chosen
+	}
+
+	m.status = fmt.Sprintf("%s will be installed from %s: %s", name, chosen, entry.pkg.Ref(chosen))
+	m.invalidateDetail()
+	m.refreshDetail()
+	return m, nil
+}
+
+// methodOf is the method a package would be installed with: the one chosen for
+// it, or the global default when nothing was chosen.
+//
+// It applies to packages that are not installed yet. Once a package is on disk
+// its manifest decides, and installedMethod below is what reads it — an update
+// must not silently repin what the user installed.
+func (m Model) methodOf(name string) string {
+	if method := m.methodFor[name]; method != "" {
+		return method
+	}
+	return m.method
 }
 
 // installedMethod keeps an update on the method the package was installed with,

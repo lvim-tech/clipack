@@ -308,21 +308,43 @@ func TestSingleFailureIsReportedOnce(t *testing.T) {
 	}
 }
 
-func TestMethodKeyIsGlobalOutsideTheInstalledTab(t *testing.T) {
-	for _, tab := range []tabID{tabAll, tabNotInstalled, tabUpdates} {
+// TestMethodKeysMeanTheSameInEveryTab is the rule the split was made for. The
+// keys used to swap roles with the tab, so what m did depended on where you
+// were standing rather than on what you were pointing at.
+func TestMethodKeysMeanTheSameInEveryTab(t *testing.T) {
+	for _, tab := range []tabID{tabAll, tabInstalled, tabNotInstalled, tabUpdates} {
 		m := atTab(t, tab)
+		before := m.method
+
+		m = applyMsg(t, m, keyMsg("M"))
+
+		if m.method == before {
+			t.Errorf("tab %v: M did not change the global method", tab)
+		}
+		if m.screen != screenBrowse {
+			t.Errorf("tab %v: M opened %v, want it to stay on the list", tab, m.screen)
+		}
+		if !strings.Contains(m.status, "Global") {
+			t.Errorf("tab %v: status = %q, want it to name the global setting", tab, m.status)
+		}
+	}
+}
+
+// TestMethodKeyChoosesPerPackageInEveryTab covers m in the tabs where it used to
+// move the global default: pressing it must now leave that alone.
+func TestMethodKeyChoosesPerPackageInEveryTab(t *testing.T) {
+	for _, tab := range []tabID{tabAll, tabNotInstalled} {
+		m := atTab(t, tab)
+		m = selectPackage(t, m, "bat")
 		before := m.method
 
 		m = applyMsg(t, m, keyMsg("m"))
 
-		if m.method == before {
-			t.Errorf("tab %v: m did not change the global method", tab)
+		if m.method != before {
+			t.Errorf("tab %v: m moved the global method to %q", tab, m.method)
 		}
-		if m.screen != screenBrowse {
-			t.Errorf("tab %v: m opened %v, want it to stay on the list", tab, m.screen)
-		}
-		if !strings.Contains(m.status, "Global") {
-			t.Errorf("tab %v: status = %q, want it to name the global setting", tab, m.status)
+		if got := m.methodOf("bat"); got == before {
+			t.Errorf("tab %v: methodOf(bat) = %q, want the package's own choice", tab, got)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lvim-tech/clipack/cnfg"
+	"github.com/lvim-tech/clipack/pkg"
 )
 
 func TestNewStylesCarriesTheThemeAndIcons(t *testing.T) {
@@ -120,8 +121,8 @@ func TestThemeChangesTheRenderedGlyphs(t *testing.T) {
 
 	// renderStatus itself has no glyphs, but the detail pane does; check the
 	// bullet used for lists instead.
-	unicodeDetail := renderDetail(entry, 60, NewStyles(unicode))
-	asciiDetail := renderDetail(entry, 60, NewStyles(ascii))
+	unicodeDetail := renderDetail(entry, pkg.MethodVersion, 60, NewStyles(unicode))
+	asciiDetail := renderDetail(entry, pkg.MethodVersion, 60, NewStyles(ascii))
 
 	if !strings.Contains(unicodeDetail, "•") {
 		t.Errorf("the unicode theme did not use its bullet:\n%s", unicodeDetail)

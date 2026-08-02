@@ -72,7 +72,8 @@ Run `clipack` with no arguments:
 | `R` | rebuild it at the ref it is already on, picking up a registry entry that changed without the version moving |
 | `x` | remove it |
 | | *a package offers install, or update, rebuild and remove — never both* |
-| `m` | toggle between the `version` and `commit` install method |
+| `m` | the selected package's method — repins and rebuilds an installed one, chooses what a not-yet-installed one will be built from |
+| `M` | the global default, used by any package that has no choice of its own |
 | `r` | refresh the registry cache |
 | `p` | add `bin/` to the current shell's startup file — offered only while that shell cannot find it |
 | `/` | filter by name, description, category or tag |

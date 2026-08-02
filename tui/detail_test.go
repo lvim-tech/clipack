@@ -45,7 +45,7 @@ func TestRenderDetail(t *testing.T) {
 		},
 	}}
 
-	out := renderDetail(entry, 60, DefaultStyles())
+	out := renderDetail(entry, pkg.MethodVersion, 60, DefaultStyles())
 
 	for _, want := range []string{
 		"bat",
@@ -79,7 +79,7 @@ func TestRenderDetail(t *testing.T) {
 func TestRenderDetailOmitsEmptyFields(t *testing.T) {
 	entry := packageItem{pkg: &pkg.Package{Name: "minimal"}}
 
-	out := renderDetail(entry, 60, DefaultStyles())
+	out := renderDetail(entry, pkg.MethodVersion, 60, DefaultStyles())
 
 	// A package with no metadata must not print empty rows or section headers.
 	for _, unwanted := range []string{"License", "Homepage", "Maintainer", "Build steps", "Binaries"} {
@@ -99,7 +99,7 @@ func TestRenderDetailWrapsToWidth(t *testing.T) {
 	}}
 
 	const width = 50
-	out := renderDetail(entry, width, DefaultStyles())
+	out := renderDetail(entry, pkg.MethodVersion, width, DefaultStyles())
 
 	for _, line := range strings.Split(out, "\n") {
 		if got := len([]rune(line)); got > width {
@@ -113,7 +113,7 @@ func TestRenderDetailClampsTinyWidth(t *testing.T) {
 
 	// A very narrow pane must not panic or produce negative-width styles.
 	for _, width := range []int{-10, 0, 1, 5, 19} {
-		if out := renderDetail(entry, width, DefaultStyles()); out == "" {
+		if out := renderDetail(entry, pkg.MethodVersion, width, DefaultStyles()); out == "" {
 			t.Errorf("renderDetail(width=%d) returned nothing", width)
 		}
 	}
@@ -194,7 +194,7 @@ func TestDetailShowsResourceTargets(t *testing.T) {
 		},
 	}
 
-	out := renderDetail(packageItem{pkg: p}, 60, DefaultStyles())
+	out := renderDetail(packageItem{pkg: p}, pkg.MethodVersion, 60, DefaultStyles())
 	// The target is what the user needs, not the path inside the build tree.
 	for _, want := range []string{"Resources", "lib/kitty"} {
 		if !strings.Contains(out, want) {
@@ -206,7 +206,7 @@ func TestDetailShowsResourceTargets(t *testing.T) {
 func TestDetailOmitsResourcesWhenThereAreNone(t *testing.T) {
 	p := &pkg.Package{Name: "bat", Install: pkg.Install{Binaries: []string{"target/release/bat"}}}
 
-	if out := renderDetail(packageItem{pkg: p}, 60, DefaultStyles()); strings.Contains(out, "Resources") {
+	if out := renderDetail(packageItem{pkg: p}, pkg.MethodVersion, 60, DefaultStyles()); strings.Contains(out, "Resources") {
 		t.Error("a package with no resources still got a Resources heading")
 	}
 }
@@ -254,7 +254,7 @@ func TestDetailReportsABrokenInstall(t *testing.T) {
 		broken:    true,
 	}
 
-	out := renderDetail(entry, 60, DefaultStyles())
+	out := renderDetail(entry, pkg.MethodVersion, 60, DefaultStyles())
 	for _, want := range []string{"Broken", "files are gone", "install again"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the detail pane is missing %q", want)

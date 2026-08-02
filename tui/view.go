@@ -350,12 +350,14 @@ func (m Model) viewConfirm() string {
 			s.Muted.Render("available  ")+entry.pkg.Ref(method),
 			"",
 			wrap.Render(s.Muted.Render("Binaries, configs, man pages"+
+				desktopClause(entry.pkg, entry.installed)+
 				resourceClause(entry.pkg, entry.installed)+" are replaced.")),
 		)
 	case actionRemove:
 		lines = append(lines,
 			wrap.Render(s.Muted.Render("Removes binaries, man pages"+
-				resourceClause(entry.installed)+" and the config directory for this package.")),
+				desktopClause(entry.installed)+resourceClause(entry.installed)+
+				" and the config directory for this package.")),
 		)
 	case actionSwitchMethod:
 		from := installedMethod(entry, m.method)
@@ -483,6 +485,21 @@ func (m Model) viewRun() string {
 		s.Pane.Width(m.logView.Width+2).Height(m.logView.Height).Render(m.logView.View()),
 		clip.Render(hint),
 	)
+}
+
+// desktopClause mentions the menu entry when the package has one, so a remove
+// says it will take the program out of the application menu instead of leaving
+// that to be discovered afterwards.
+//
+// It takes several packages for the same reason resourceClause does: an update
+// reads one manifest and writes another.
+func desktopClause(packages ...*pkg.Package) string {
+	for _, p := range packages {
+		if p != nil && len(p.Install.Desktop) > 0 {
+			return ", the menu entry"
+		}
+	}
+	return ""
 }
 
 // resourceClause names the directories an install put outside bin/, configs/

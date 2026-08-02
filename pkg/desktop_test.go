@@ -1,0 +1,211 @@
+package pkg
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// withDataHome points the desktop directory at a temporary tree, so a test can
+// never write into the developer's own application menu.
+func withDataHome(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, ".local", "share"))
+	return dir
+}
+
+// kittyLikeEntry is a shipped .desktop file of the shape the mechanism has to
+// cope with: a bare program name in Exec and TryExec, an icon resolved through
+// the theme, and an action group with an Exec of its own.
+const kittyLikeEntry = `[Desktop Entry]
+Version=1.0
+Type=Application
+Name=kitty
+Name[bg]=кити
+GenericName=Terminal emulator
+TryExec=kitty
+Exec=kitty --single-instance
+Icon=kitty
+Categories=System;TerminalEmulator;
+
+[Desktop Action new-window]
+Name=New window
+Exec=kitty --new-window
+`
+
+func TestRewriteDesktopEntryPinsExecToTheInstalledBinary(t *testing.T) {
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "kitty"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(rewriteDesktopEntry([]byte(kittyLikeEntry), desktopRewrite{BinDir: binDir}))
+
+	// The rewrite is the feature: without it the entry launches whichever kitty
+	// PATH finds, which is the distribution's.
+	for _, want := range []string{
+		"Exec=" + filepath.Join(binDir, "kitty") + " --single-instance",
+		"TryExec=" + filepath.Join(binDir, "kitty"),
+		"Exec=" + filepath.Join(binDir, "kitty") + " --new-window",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("entry = %q\nwant it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Exec=kitty") || strings.Contains(got, "TryExec=kitty") {
+		t.Errorf("entry = %q, want no bare program name left", got)
+	}
+}
+
+// TestRewriteDesktopEntryLeavesAnUnknownProgramAlone covers an entry that
+// launches something clipack did not install. Pointing it at a file that does
+// not exist would turn a working entry into a broken one.
+func TestRewriteDesktopEntryLeavesAnUnknownProgramAlone(t *testing.T) {
+	got := string(rewriteDesktopEntry([]byte("[Desktop Entry]\nExec=somethingelse --flag\n"),
+		desktopRewrite{BinDir: t.TempDir()}))
+
+	if !strings.Contains(got, "Exec=somethingelse --flag") {
+		t.Errorf("entry = %q, want the Exec left untouched", got)
+	}
+}
+
+func TestRewriteDesktopEntrySuffixesEveryName(t *testing.T) {
+	got := string(rewriteDesktopEntry([]byte(kittyLikeEntry), desktopRewrite{BinDir: t.TempDir()}))
+
+	if !strings.Contains(got, "Name=kitty (clipack)") {
+		t.Errorf("entry = %q, want the name distinguished from the system entry", got)
+	}
+	// A localised name left unsuffixed shows the two entries under one label on
+	// any desktop running that locale.
+	if !strings.Contains(got, "Name[bg]=кити (clipack)") {
+		t.Errorf("entry = %q, want the localised name suffixed too", got)
+	}
+	// An action's Name labels the action, not the program.
+	if !strings.Contains(got, "Name=New window\n") {
+		t.Errorf("entry = %q, want the action name left alone", got)
+	}
+	if strings.Contains(got, "New window (clipack)") {
+		t.Errorf("entry = %q, want no suffix on an action label", got)
+	}
+	// GenericName is not a name key.
+	if !strings.Contains(got, "GenericName=Terminal emulator\n") {
+		t.Errorf("entry = %q, want GenericName untouched", got)
+	}
+}
+
+func TestRewriteDesktopEntryHonoursAnExplicitName(t *testing.T) {
+	got := string(rewriteDesktopEntry([]byte(kittyLikeEntry),
+		desktopRewrite{BinDir: t.TempDir(), Name: "kitty 0.48"}))
+
+	if !strings.Contains(got, "Name=kitty 0.48") {
+		t.Errorf("entry = %q, want the configured name", got)
+	}
+	if strings.Contains(got, "(clipack)") {
+		t.Errorf("entry = %q, want no suffix when a name was given", got)
+	}
+}
+
+func TestRewriteDesktopEntryRepointsTheIcon(t *testing.T) {
+	got := string(rewriteDesktopEntry([]byte(kittyLikeEntry),
+		desktopRewrite{BinDir: t.TempDir(), Icon: "/tmp/icons/kitty.png"}))
+
+	if !strings.Contains(got, "Icon=/tmp/icons/kitty.png") {
+		t.Errorf("entry = %q, want the icon repointed", got)
+	}
+}
+
+// TestRewriteDesktopEntryQuotesAPathWithSpaces guards the one case where an
+// unquoted rewrite silently changes the meaning: the launcher would read the
+// tail of the directory name as the first argument.
+func TestRewriteDesktopEntryQuotesAPathWithSpaces(t *testing.T) {
+	binDir := filepath.Join(t.TempDir(), "my tools")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "kitty"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(rewriteDesktopEntry([]byte("[Desktop Entry]\nExec=kitty -1\n"),
+		desktopRewrite{BinDir: binDir}))
+
+	if !strings.Contains(got, `Exec="`+filepath.Join(binDir, "kitty")+`" -1`) {
+		t.Errorf("entry = %q, want the path quoted", got)
+	}
+}
+
+func TestSplitExecProgram(t *testing.T) {
+	tests := []struct {
+		in          string
+		program     string
+		rest        string
+		description string
+	}{
+		{in: "kitty", program: "kitty", description: "no arguments"},
+		{in: "kitty --single-instance", program: "kitty", rest: "--single-instance", description: "with arguments"},
+		{in: `"/opt/my tools/kitty" -1`, program: "/opt/my tools/kitty", rest: "-1", description: "quoted path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			program, rest := splitExecProgram(tt.in)
+			if program != tt.program || rest != tt.rest {
+				t.Errorf("splitExecProgram(%q) = (%q, %q), want (%q, %q)",
+					tt.in, program, rest, tt.program, tt.rest)
+			}
+		})
+	}
+}
+
+// TestDesktopPathsDoNotCollideWithTheSystemEntry is why the file is prefixed: a
+// user file with the same basename as a system one replaces it in every
+// launcher, and the point here is to have both.
+func TestDesktopPathsDoNotCollideWithTheSystemEntry(t *testing.T) {
+	withDataHome(t)
+
+	entry, iconDir, err := desktopPaths("kitty", "linux-package/share/applications/kitty.desktop")
+	if err != nil {
+		t.Fatalf("desktopPaths() error = %v", err)
+	}
+
+	if base := filepath.Base(entry); base == "kitty.desktop" {
+		t.Error("the entry has the same basename as the system one, which would override it")
+	}
+	if !strings.HasPrefix(filepath.Base(entry), desktopFilePrefix) {
+		t.Errorf("entry = %q, want the clipack prefix so removal can recognise it", entry)
+	}
+	if !strings.HasSuffix(filepath.Dir(entry), filepath.Join(".local", "share", "applications")) {
+		t.Errorf("entry = %q, want it under the user's application directory", entry)
+	}
+	if !strings.Contains(iconDir, filepath.Join("clipack", "icons", "kitty")) {
+		t.Errorf("iconDir = %q, want a clipack-owned directory", iconDir)
+	}
+}
+
+func TestDesktopPathsFollowXDGDataHome(t *testing.T) {
+	withDataHome(t)
+	custom := filepath.Join(t.TempDir(), "data")
+	t.Setenv("XDG_DATA_HOME", custom)
+
+	entry, _, err := desktopPaths("kitty", "kitty.desktop")
+	if err != nil {
+		t.Fatalf("desktopPaths() error = %v", err)
+	}
+	if want := filepath.Join(custom, "applications"); filepath.Dir(entry) != want {
+		t.Errorf("entry directory = %q, want %q", filepath.Dir(entry), want)
+	}
+}
+
+func TestDesktopPathsRejectWhatIsNotAnEntry(t *testing.T) {
+	withDataHome(t)
+
+	for _, source := range []string{"", "share/applications", "share/applications/kitty.png"} {
+		if _, _, err := desktopPaths("kitty", source); err == nil {
+			t.Errorf("desktopPaths(%q) error = nil, want it rejected", source)
+		}
+	}
+}

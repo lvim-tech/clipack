@@ -257,6 +257,7 @@ func (in *Installer) Install(p *Package, method string) error {
 	var errs []error
 	errs = append(errs, in.installBinaries(p, paths)...)
 	errs = append(errs, in.installResources(p, paths)...)
+	errs = append(errs, in.installDesktopEntries(p, paths)...)
 	errs = append(errs, in.installConfigs(p, paths)...)
 	errs = append(errs, in.installMan(p, paths)...)
 	errs = append(errs, in.installAdditionalConfig(p, paths)...)
@@ -326,6 +327,8 @@ func (in *Installer) Remove(p *Package) error {
 // scripts — everything the install put outside the package's own config
 // directory, which Remove deletes wholesale.
 func (in *Installer) removeArtifacts(p *Package, paths Paths) {
+	in.removeDesktopEntries(p)
+
 	for _, res := range p.Install.Resources {
 		_, dst, err := in.resolveResource(res, paths)
 		if err != nil {
@@ -513,6 +516,108 @@ func (in *Installer) installBinaries(p *Package, paths Paths) []error {
 		in.infof("Installed binary %s", dst)
 	}
 	return errs
+}
+
+// installDesktopEntries puts a package's menu entries in the user's application
+// directory. Failures are warnings, not errors: a program that is installed and
+// runnable but missing from the menu is a working install, and refusing the
+// whole package over a .desktop file would be out of proportion.
+func (in *Installer) installDesktopEntries(p *Package, paths Paths) []error {
+	for _, entry := range p.Install.Desktop {
+		src, err := under(paths.Build, entry.Source)
+		if err != nil {
+			in.warnf("desktop entry source: %v", err)
+			continue
+		}
+		contents, err := os.ReadFile(src)
+		if err != nil {
+			in.warnf("desktop entry %s not found in build output", entry.Source)
+			continue
+		}
+
+		dst, iconDir, err := desktopPaths(p.Name, entry.Source)
+		if err != nil {
+			in.warnf("desktop entry: %v", err)
+			continue
+		}
+
+		icon := in.installDesktopIcon(p, entry, paths, iconDir)
+
+		if err := utils.EnsureDirectoryExists(filepath.Dir(dst)); err != nil {
+			in.warnf("could not create %s: %v", filepath.Dir(dst), err)
+			continue
+		}
+		rewritten := rewriteDesktopEntry(contents, desktopRewrite{
+			BinDir: paths.Bin,
+			Name:   entry.Name,
+			Icon:   icon,
+		})
+		if err := os.WriteFile(dst, rewritten, 0o644); err != nil {
+			in.warnf("could not write desktop entry %s: %v", dst, err)
+			continue
+		}
+		in.infof("Installed desktop entry %s", dst)
+	}
+	return nil
+}
+
+// installDesktopIcon copies the icon an entry declares and returns its absolute
+// path, or "" when there is none to install — in which case Icon= is left as the
+// package wrote it and resolves through the icon theme.
+func (in *Installer) installDesktopIcon(p *Package, entry DesktopEntry, paths Paths, iconDir string) string {
+	if entry.Icon == "" {
+		return ""
+	}
+
+	src, err := under(paths.Build, entry.Icon)
+	if err != nil {
+		in.warnf("desktop icon: %v", err)
+		return ""
+	}
+	if _, err := os.Stat(src); err != nil {
+		in.warnf("desktop icon %s not found in build output", entry.Icon)
+		return ""
+	}
+
+	if err := utils.EnsureDirectoryExists(iconDir); err != nil {
+		in.warnf("could not create %s: %v", iconDir, err)
+		return ""
+	}
+	dst := filepath.Join(iconDir, filepath.Base(entry.Icon))
+	if err := CopyFile(src, dst); err != nil {
+		in.warnf("could not copy desktop icon %s: %v", entry.Icon, err)
+		return ""
+	}
+	in.infof("Installed desktop icon %s", dst)
+	return dst
+}
+
+// removeDesktopEntries deletes the menu entries and icons an install added.
+func (in *Installer) removeDesktopEntries(p *Package) {
+	for _, entry := range p.Install.Desktop {
+		dst, iconDir, err := desktopPaths(p.Name, entry.Source)
+		if err != nil {
+			in.warnf("not removing desktop entry: %v", err)
+			continue
+		}
+
+		// What keeps this from deleting a file the distribution owns is that the
+		// name is derived rather than taken: desktopPaths prefixes it, so a
+		// manifest naming "kitty.desktop" resolves to "clipack-kitty-kitty.desktop"
+		// and the system entry is out of reach by construction.
+		if err := os.Remove(dst); err == nil {
+			in.infof("Removed desktop entry %s", dst)
+		} else if !os.IsNotExist(err) {
+			in.warnf("could not remove desktop entry %s: %v", dst, err)
+		}
+
+		if entry.Icon == "" {
+			continue
+		}
+		if err := os.RemoveAll(iconDir); err != nil {
+			in.warnf("could not remove desktop icons %s: %v", iconDir, err)
+		}
+	}
 }
 
 func (in *Installer) installResources(p *Package, paths Paths) []error {

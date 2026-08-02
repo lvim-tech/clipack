@@ -46,6 +46,7 @@ type Install struct {
 	Steps            []string           `yaml:"steps,omitempty"`
 	Binaries         []string           `yaml:"binaries,omitempty"`
 	Resources        []Resource         `yaml:"resources,omitempty"`
+	Desktop          []DesktopEntry     `yaml:"desktop,omitempty"`
 	Configs          []string           `yaml:"configs,omitempty"`
 	Man              []string           `yaml:"man,omitempty"`
 	AdditionalConfig []AdditionalConfig `yaml:"additional-config,omitempty"`
@@ -68,6 +69,28 @@ type Resource struct {
 	Source string `yaml:"source"`
 	// Target is where it is installed, relative to the base directory.
 	Target string `yaml:"target"`
+}
+
+// DesktopEntry is a .desktop file a package ships, installed into the user's
+// application directory so a graphical program appears in menus and launchers.
+//
+// Which packages have one is the registry's business, not clipack's: a terminal
+// emulator ships an entry, a command-line tool does not, and the difference is
+// visible in the build output rather than in anything clipack could infer.
+//
+// The entry is installed alongside the distribution's, not over it, and its Exec
+// is repointed at the binary clipack installed — see rewriteDesktopEntry for why
+// that rewrite is the part that matters.
+type DesktopEntry struct {
+	// Source is the .desktop file in the build output, relative to the build dir.
+	Source string `yaml:"source"`
+	// Icon is an optional image in the build output. Without it the entry falls
+	// back to the icon theme, which only has one when a system package supplied
+	// it — so a package that is not also installed system-wide wants this.
+	Icon string `yaml:"icon,omitempty"`
+	// Name replaces the displayed name. Empty appends " (clipack)" to whatever
+	// the shipped file says.
+	Name string `yaml:"name,omitempty"`
 }
 
 // AdditionalConfig holds additional configuration data.

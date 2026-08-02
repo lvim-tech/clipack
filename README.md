@@ -410,6 +410,7 @@ install:
 | `install.steps` | Shell commands, run in order inside the build directory. |
 | `install.binaries` | Paths, relative to the build directory, copied into `bin/`. |
 | `install.resources` | Directory trees a program needs beside its binary, as `source` (relative to the build directory) and `target` (relative to `base`). Recorded in the manifest, so uninstalling removes them. See below. |
+| `install.desktop` | Menu entries a graphical program ships, as `source` (a `.desktop` file relative to the build directory), an optional `icon` and an optional `name`. Installed into the user's application directory. See below. |
 | `install.configs` | Files copied from the build tree into `configs/<name>/`. |
 | `install.man` | Man pages; the extension picks the section (`.1` → `man1/`). |
 | `install.additional-config` | Files written into `configs/<name>/`. A value starting with `http://` or `https://` is downloaded; anything else is used literally. `.sh` files are made executable. |
@@ -442,6 +443,44 @@ inside `base`, may not touch `bin/`, `configs/`, `build/`, `man/` or
 `registry/`, and may not be a top-level directory: `lib/kitty` belongs to one
 package and removing it is safe, whereas `lib` is shared and the first uninstall
 would empty it for everyone.
+
+**Desktop entries**
+
+A graphical program installed by clipack is not in any menu, because nothing put
+a `.desktop` file where launchers look. Declaring the one the package already
+builds fixes that:
+
+```yaml
+    desktop:
+        - source: linux-package/share/applications/kitty.desktop
+          icon: linux-package/share/icons/hicolor/256x256/apps/kitty.png
+```
+
+The entry is installed into `$XDG_DATA_HOME/applications` (`~/.local/share/applications`
+by default) as `clipack-<package>-<file>.desktop`. No root is needed, and nothing
+in a system directory is touched or overwritten.
+
+Three things are rewritten on the way in:
+
+- **`Exec` and `TryExec`** are repointed at the binary in clipack's `bin/`. This
+  is the part that matters. A shipped entry says `Exec=kitty` and leaves the
+  choice to `PATH`, so on a machine that also has the distribution's package the
+  menu entry would list the clipack build and launch the other one. Entries in
+  `[Desktop Action …]` groups are rewritten too. A program that is not in `bin/`
+  is left alone.
+- **`Name`** gets ` (clipack)` appended, so the two entries are distinguishable
+  in the launcher. Localised `Name[…]` variants are suffixed as well; an action's
+  name is not. Set `name:` to replace it outright instead.
+- **`Icon`** is repointed at the installed icon when one is declared. Without
+  `icon:` the entry falls back to the icon theme, which has a matching icon only
+  when a system package supplied one.
+
+Entries and icons go into the manifest, so `remove` deletes them. Removal can
+only reach files clipack wrote: the installed name is derived from the package
+name and prefixed, never taken from the manifest as-is.
+
+A failure here is a warning rather than an error. A program that is installed
+and runnable but missing from the menu is still a working install.
 
 **How steps run**
 

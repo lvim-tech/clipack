@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -559,5 +561,103 @@ func TestReinstallLabelCarriesTheMarkCount(t *testing.T) {
 
 	if desc := m.contextualKeys().Reinstall.Help().Desc; desc != "rebuild 2" {
 		t.Errorf("Reinstall help = %q, want %q", desc, "rebuild 2")
+	}
+}
+
+// TestBatchContinuesPastAFailureAndKeepsTheFailedInstall drives a real batch
+// update to completion: the first entry's build fails, the second's succeeds.
+// Two guarantees at once — a failure does not block the rest of the batch, and
+// the failed package keeps its previous version instead of ending up
+// uninstalled (the staged-install rule, inside a batch).
+func TestBatchContinuesPastAFailureAndKeepsTheFailedInstall(t *testing.T) {
+	config := testConfig(t)
+	in := pkg.NewInstaller(config, nil)
+
+	mk := func(name, version, payload string) *pkg.Package {
+		return &pkg.Package{
+			Name: name, Version: version, Commit: "c-" + version,
+			Install: pkg.Install{
+				Steps:    []string{"mkdir -p out", "printf " + payload + " > out/" + name},
+				Binaries: []string{"out/" + name},
+			},
+		}
+	}
+	if err := in.Install(mk("alpha", "v1.0.0", "one"), pkg.MethodVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(mk("beta", "v1.0.0", "one"), pkg.MethodVersion); err != nil {
+		t.Fatal(err)
+	}
+
+	// The registry moved on: alpha's new build is broken, beta's is fine.
+	alpha2 := mk("alpha", "v2.0.0", "two")
+	alpha2.Install.Steps = []string{"exit 1"}
+	beta2 := mk("beta", "v2.0.0", "two")
+
+	installed, err := pkg.InstalledMap(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(config)
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = applyMsg(t, m, registryLoadedMsg{packages: []*pkg.Package{alpha2, beta2}, installed: installed})
+	m.tab = tabUpdates
+	m.applyTab()
+	m = applyMsg(t, m, keyMsg("a"))
+	m = applyMsg(t, m, keyMsg("u"))
+	if m.screen != screenConfirm || len(m.pendingBatch) != 2 {
+		t.Fatalf("screen = %v, batch = %d — want both queued", m.screen, len(m.pendingBatch))
+	}
+
+	// Confirm and pump the event loop to the end, the way Bubble Tea would —
+	// including unpacking tea.Batch, which is what the confirmation returns.
+	var cmd tea.Cmd
+	m, cmd = applyMsgCmd(t, m, keyMsg("y"))
+	queue := []tea.Cmd{cmd}
+	for i := 0; len(queue) > 0 && i < 1000 && !m.runDone; i++ {
+		next := queue[0]
+		queue = queue[1:]
+		if next == nil {
+			continue
+		}
+		msg := next()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
+			continue
+		}
+		if msg == nil {
+			continue
+		}
+		var follow tea.Cmd
+		m, follow = applyMsgCmd(t, m, msg)
+		if follow != nil {
+			queue = append(queue, follow)
+		}
+	}
+	if !m.runDone {
+		t.Fatal("the batch never finished")
+	}
+	if !m.runFailed {
+		t.Error("runFailed = false, want the alpha failure reported")
+	}
+
+	// beta was AFTER alpha in the batch and must have completed regardless.
+	if data, err := os.ReadFile(filepath.Join(config.Paths.Bin, "beta")); err != nil || string(data) != "two" {
+		t.Errorf("beta = %q, %v — want it updated despite alpha's failure", data, err)
+	}
+	// alpha's failed build must have left v1 in place, not nothing.
+	if data, err := os.ReadFile(filepath.Join(config.Paths.Bin, "alpha")); err != nil || string(data) != "one" {
+		t.Errorf("alpha = %q, %v — want the previous version kept", data, err)
+	}
+	final, err := pkg.InstalledMap(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final["alpha"] == nil || final["alpha"].Version != "v1.0.0" {
+		t.Errorf("alpha manifest = %v, want v1.0.0 still recorded", final["alpha"])
+	}
+	if final["beta"] == nil || final["beta"].Version != "v2.0.0" {
+		t.Errorf("beta manifest = %v, want v2.0.0", final["beta"])
 	}
 }

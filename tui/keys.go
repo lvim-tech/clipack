@@ -52,6 +52,10 @@ type keyMap struct {
 	// picking commit for one package picked it for every package.
 	Method       key.Binding
 	MethodGlobal key.Binding
+	// Category and CategoryBack cycle the category filter through
+	// all -> first -> ... -> last -> all, in both directions.
+	Category     key.Binding
+	CategoryBack key.Binding
 	// Path extends the current shell's startup file. It is enabled only while
 	// that shell cannot find the managed bin directory, so it appears in the
 	// help exactly when the warning above it is on screen.
@@ -149,6 +153,14 @@ func defaultKeys() keyMap {
 			key.WithKeys("M"),
 			key.WithHelp("M", "global method"),
 		),
+		Category: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "category"),
+		),
+		CategoryBack: key.NewBinding(
+			key.WithKeys("C"),
+			key.WithHelp("C", "category back"),
+		),
 		Path: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "add bin to PATH"),
@@ -187,7 +199,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 		k.Check, k.CheckAll,
 		k.Install, k.Update, k.Reinstall, k.Remove,
 		k.Visual, k.Yank,
-		k.Filter, k.Refresh, k.Method, k.MethodGlobal,
+		k.Filter, k.Category, k.Refresh, k.Method, k.MethodGlobal,
 		k.Path,
 		k.Help, k.Quit,
 	}
@@ -198,6 +210,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.FocusLeft, k.FocusRight},
 		{k.Tab, k.ShiftTab, k.Filter, k.Refresh},
+		{k.Category, k.CategoryBack},
 		{k.Check, k.CheckAll, k.Method, k.MethodGlobal, k.Path},
 		{k.Install, k.Update, k.Reinstall, k.Remove},
 		{k.Visual, k.Yank, k.Help, k.Quit},

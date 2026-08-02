@@ -159,7 +159,7 @@ func TestBuildItemsPerTab(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.label, func(t *testing.T) {
-			items := buildItems(packages, installed, nil, tt.tab)
+			items := buildItems(packages, installed, nil, tt.tab, "")
 			if len(items) != len(tt.want) {
 				t.Fatalf("got %d items, want %d %v", len(items), len(tt.want), tt.want)
 			}
@@ -176,7 +176,7 @@ func TestBuildItemsPerTab(t *testing.T) {
 func TestBuildItemsAttachesInstalledRecord(t *testing.T) {
 	packages, installed := samplePackages()
 
-	items := buildItems(packages, installed, nil, tabAll)
+	items := buildItems(packages, installed, nil, tabAll, "")
 	for _, item := range items {
 		entry := item.(packageItem)
 		want := installed[entry.pkg.Name]
@@ -187,7 +187,7 @@ func TestBuildItemsAttachesInstalledRecord(t *testing.T) {
 }
 
 func TestBuildItemsEmptyRegistry(t *testing.T) {
-	if items := buildItems(nil, nil, nil, tabAll); len(items) != 0 {
+	if items := buildItems(nil, nil, nil, tabAll, ""); len(items) != 0 {
 		t.Errorf("got %d items for an empty registry, want 0", len(items))
 	}
 }

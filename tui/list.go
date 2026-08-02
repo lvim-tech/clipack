@@ -378,9 +378,15 @@ func newPackageList(s Styles) list.Model {
 }
 
 // buildItems turns the registry and installed sets into list items for a tab.
-func buildItems(packages []*pkg.Package, installed map[string]*pkg.Package, broken map[string]bool, tab tabID) []list.Item {
+func buildItems(packages []*pkg.Package, installed map[string]*pkg.Package, broken map[string]bool, tab tabID, category string) []list.Item {
 	items := make([]list.Item, 0, len(packages))
 	for _, p := range packages {
+		// The category is an axis across every tab, not a fifth tab: "installed
+		// terminals" and "not yet installed terminals" are both questions worth
+		// asking, so the two filters compose instead of excluding each other.
+		if category != "" && p.Category != category {
+			continue
+		}
 		entry := packageItem{pkg: p, installed: installed[p.Name], broken: broken[p.Name]}
 		switch tab {
 		case tabInstalled:

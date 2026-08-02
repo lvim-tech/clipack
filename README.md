@@ -74,6 +74,7 @@ Run `clipack` with no arguments:
 | | *a package offers install, or update, rebuild and remove — never both* |
 | `m` | the selected package's method — repins and rebuilds an installed one, chooses what a not-yet-installed one will be built from |
 | `M` | the global default, used by any package that has no choice of its own |
+| `c` / `C` | cycle the category filter forward / backward — composes with the tabs, so "installed terminals" is two keys |
 | `r` | refresh the registry cache |
 | `p` | add `bin/` to the current shell's startup file — offered only while that shell cannot find it |
 | `/` | filter by name, description, category or tag |
@@ -86,10 +87,10 @@ border. `i`, `u` and `x` always act on the selected package, so they work from
 either pane.
 
 The help line at the bottom follows the cursor: it offers `i` for a package that
-is not installed, and `u` and `x` for one that is. Reinstalling over an existing
-install is refused — it would leave the previous version's binaries behind, since
-only `update` reads the old manifest and knows what to clean up. Use `update` to
-upgrade, or `remove` and then `install` for a clean slate.
+is not installed, and `u`, `R` and `x` for one that is. A plain `install` over
+an existing install is refused — it would leave the previous version's binaries
+behind, since only the update path reads the old manifest and knows what to
+clean up. `R` is that same path at the ref you are already on.
 
 ### Selecting and copying text
 

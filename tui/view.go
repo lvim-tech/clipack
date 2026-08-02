@@ -146,9 +146,17 @@ func (m Model) header() string {
 	s := m.styles
 	sep := s.Icons.Separator
 
+	// Counts follow the active category, so the tab labels agree with what
+	// the list actually shows: "Installed (21)" over a list of 3 terminals
+	// would be a header describing a different screen.
+	total := 0
 	installedCount := 0
 	updateCount := 0
 	for _, p := range m.packages {
+		if m.category != "" && p.Category != m.category {
+			continue
+		}
+		total++
 		if inst, ok := m.installed[p.Name]; ok {
 			installedCount++
 			if pkg.HasUpdate(p, inst) {
@@ -159,20 +167,26 @@ func (m Model) header() string {
 
 	// The counters are abbreviated on a narrow terminal rather than truncated
 	// mid-word.
+	shown := "all"
+	if m.category != "" {
+		shown = m.category
+	}
+
 	var meta string
 	if m.contentWidth() < 64 {
-		meta = fmt.Sprintf("%d pkg %s %d inst", len(m.packages), sep, installedCount)
+		meta = fmt.Sprintf("%d pkg %s %d inst", total, sep, installedCount)
 		if updateCount > 0 {
 			meta += fmt.Sprintf(" %s %s", sep, s.BadgeUpdate.Render(fmt.Sprintf("%d upd", updateCount)))
 		}
 	} else {
-		meta = fmt.Sprintf("%d packages %s %d installed", len(m.packages), sep, installedCount)
+		meta = fmt.Sprintf("%d packages %s %d installed", total, sep, installedCount)
 		if updateCount > 0 {
 			meta += fmt.Sprintf(" %s %s", sep, s.BadgeUpdate.Render(fmt.Sprintf("%d updates", updateCount)))
 		}
 		// "global" because m repins a single package in the Installed tab; this
 		// value is the default a fresh install uses.
 		meta += s.Muted.Render(fmt.Sprintf("  %s  global install method: %s", sep, m.method))
+		meta += s.Muted.Render(fmt.Sprintf("  %s  category: ", sep)) + s.BadgeInstalled.Render(shown)
 	}
 
 	// Marks are the one piece of state an action reads that is not the row
@@ -191,9 +205,9 @@ func (m Model) header() string {
 	// without switching to it. They are dropped on a narrow terminal, where the
 	// strip would otherwise be clipped and a tab would disappear entirely.
 	counts := map[tabID]int{
-		tabAll:          len(m.packages),
+		tabAll:          total,
 		tabInstalled:    installedCount,
-		tabNotInstalled: len(m.packages) - installedCount,
+		tabNotInstalled: total - installedCount,
 		tabUpdates:      updateCount,
 	}
 	showCounts := m.contentWidth() >= 64

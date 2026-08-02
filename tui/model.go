@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -154,6 +155,12 @@ type Model struct {
 	// have forgotten about, so both clear the selection.
 	checked    map[string]bool
 	lastFilter string
+
+	// category narrows every tab to one registry category. Empty means all.
+	// It became worth a key of its own when the registry grew from 25 entries
+	// to 76 across 13 categories: the filter still finds one package by name,
+	// but "show me the terminals" is a browse, not a search.
+	category string
 
 	// methodFor overrides the install method for one package, before it is
 	// installed. Until it exists on disk there is no manifest to record a pin
@@ -576,7 +583,7 @@ func (m *Model) refreshBroken() {
 }
 
 func (m *Model) applyTab() {
-	items := buildItems(m.packages, m.installed, m.broken, m.tab)
+	items := buildItems(m.packages, m.installed, m.broken, m.tab, m.category)
 	m.list.SetItems(items)
 	if m.list.Index() >= len(items) {
 		m.list.Select(0)
@@ -844,6 +851,14 @@ func (m Model) contextualKeys() keyMap {
 	}
 	keys.MethodGlobal.SetHelp("M", "global: "+otherMethod(m.method))
 
+	// The label names the active category, so the collapsed help doubles as
+	// the indicator of where you are in the cycle.
+	if m.category == "" {
+		keys.Category.SetHelp("c", "category: all")
+	} else {
+		keys.Category.SetHelp("c", "category: "+m.category)
+	}
+
 	// Selecting and copying belong to the detail pane; filtering to the list.
 	keys.Visual.SetEnabled(inDetail)
 	keys.Yank.SetEnabled(inDetail)
@@ -865,6 +880,54 @@ func (m Model) contextualKeys() keyMap {
 // mentions the managed bin directory.
 func (m Model) needsShellPath() bool {
 	return m.shellKnown && m.shellStatus.NeedsPaths()
+}
+
+// categories lists the distinct categories of the loaded registry, sorted.
+// Derived from the packages rather than hardcoded, so a category added to the
+// registry appears here without touching this code.
+func (m Model) categories() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range m.packages {
+		if p.Category == "" || seen[p.Category] {
+			continue
+		}
+		seen[p.Category] = true
+		out = append(out, p.Category)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// cycleCategory moves the category filter forward or backward through
+// all -> first -> ... -> last -> all. Like a tab change it clears the marks:
+// packages that just left the screen are marks you have forgotten about.
+func (m *Model) cycleCategory(delta int) {
+	cats := m.categories()
+	if len(cats) == 0 {
+		return
+	}
+
+	// Position 0 is "all"; the categories follow in order.
+	pos := 0
+	for i, c := range cats {
+		if c == m.category {
+			pos = i + 1
+			break
+		}
+	}
+	pos = (pos + delta + len(cats) + 1) % (len(cats) + 1)
+
+	if pos == 0 {
+		m.category = ""
+		m.status = "Category: all"
+	} else {
+		m.category = cats[pos-1]
+		m.status = "Category: " + m.category
+	}
+
+	m.clearChecks()
+	m.applyTab()
 }
 
 // selected returns the highlighted package, if any.
@@ -969,6 +1032,14 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// keys the same key again.
 			m.method = otherMethod(m.method)
 			m.status = "Global install method: " + m.method
+			return m, nil
+
+		case key.Matches(keyMsg, m.keys.Category):
+			m.cycleCategory(1)
+			return m, nil
+
+		case key.Matches(keyMsg, m.keys.CategoryBack):
+			m.cycleCategory(-1)
 			return m, nil
 
 		case key.Matches(keyMsg, m.keys.Path):

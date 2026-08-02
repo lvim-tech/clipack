@@ -107,9 +107,17 @@ var matchers = []matcher{
 		// header path is a better search term than the package name: the same
 		// header lives in xxhash-devel on one distro and libxxhash-dev on
 		// another, but `simde/x86/avx2.h` identifies it either way.
-		re: regexp.MustCompile(`fatal error: ([\w./+-]+\.h(?:pp)?): No such file or directory`),
+		//
+		// Two wordings, because the compiler is not always gcc. clang quotes the
+		// name and says "not found", and that is what zig's translate-c prints —
+		// so a ghostty build that stopped on <adwaita.h> got the raw log and no
+		// explanation, which is the case this whole file exists to prevent.
+		re: regexp.MustCompile(`fatal error: (?:([\w./+-]+\.h(?:pp)?): No such file or directory|'([\w./+-]+\.h(?:pp)?)' not found)`),
 		diagnose: func(m []string) Diagnosis {
 			header := m[1]
+			if header == "" {
+				header = m[2]
+			}
 			// The first path segment is usually the library: "simde/x86/avx2.h"
 			// -> simde, "xkbcommon/xkbcommon.h" -> xkbcommon.
 			lib := header

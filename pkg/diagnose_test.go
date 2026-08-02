@@ -357,6 +357,21 @@ func TestDiagnoseMissingHeader(t *testing.T) {
 			wantIn:  "fmt/core.hpp",
 			wantFix: "fmt-devel",
 		},
+		{
+			// clang quotes the name and says "not found" instead. zig's
+			// translate-c prints exactly this, and a ghostty build that stopped
+			// on it produced pages of log and not one line of explanation.
+			name:    "clang wording, from a ghostty build",
+			output:  "./.zig-cache/o/f45c/adw_c.h:1:10: fatal error: 'adwaita.h' not found",
+			wantIn:  "adwaita.h",
+			wantFix: "adwaita-devel",
+		},
+		{
+			name:    "clang wording with a directory component",
+			output:  "./.zig-cache/o/7abe/gtk_c.h:1:10: fatal error: 'gtk/gtk.h' not found",
+			wantIn:  "gtk/gtk.h",
+			wantFix: "gtk-devel",
+		},
 	}
 
 	for _, tt := range tests {

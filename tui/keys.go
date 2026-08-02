@@ -39,9 +39,13 @@ type keyMap struct {
 	CheckAll key.Binding
 	Install  key.Binding
 	Update   key.Binding
-	Remove   key.Binding
-	Refresh  key.Binding
-	Method   key.Binding
+	// Reinstall rebuilds a package that is already current. Capital R, because
+	// lowercase r refreshes the registry and the two are a keystroke apart in
+	// intent as well: one costs a network round trip, the other a compile.
+	Reinstall key.Binding
+	Remove    key.Binding
+	Refresh   key.Binding
+	Method    key.Binding
 	// Path extends the current shell's startup file. It is enabled only while
 	// that shell cannot find the managed bin directory, so it appears in the
 	// help exactly when the warning above it is on screen.
@@ -119,6 +123,10 @@ func defaultKeys() keyMap {
 			key.WithKeys("u"),
 			key.WithHelp("u", "update"),
 		),
+		Reinstall: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "rebuild"),
+		),
 		Remove: key.NewBinding(
 			key.WithKeys("x"),
 			key.WithHelp("x", "remove"),
@@ -167,7 +175,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
 		k.Move, k.Pane, k.Tabs,
 		k.Check, k.CheckAll,
-		k.Install, k.Update, k.Remove,
+		k.Install, k.Update, k.Reinstall, k.Remove,
 		k.Visual, k.Yank,
 		k.Filter, k.Refresh, k.Method,
 		k.Path,
@@ -181,7 +189,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.FocusLeft, k.FocusRight},
 		{k.Tab, k.ShiftTab, k.Filter, k.Refresh},
 		{k.Check, k.CheckAll, k.Method, k.Path},
-		{k.Install, k.Update, k.Remove},
+		{k.Install, k.Update, k.Reinstall, k.Remove},
 		{k.Visual, k.Yank, k.Help, k.Quit},
 	}
 }

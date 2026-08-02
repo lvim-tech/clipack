@@ -353,6 +353,26 @@ func (m Model) viewConfirm() string {
 				desktopClause(entry.pkg, entry.installed)+
 				resourceClause(entry.pkg, entry.installed)+" are replaced.")),
 		)
+	case actionReinstall:
+		method := installedMethod(entry, m.method)
+		lines = append(lines,
+			s.Muted.Render("method  ")+method,
+			s.Muted.Render("ref     ")+entry.installed.Ref(method),
+			"",
+			wrap.Render(s.Muted.Render(fmt.Sprintf(
+				"Rebuilds %s from source at the ref it is already on. Nothing about the version changes — "+
+					"this picks up a registry entry that changed without it.", entry.pkg.Name))),
+			"",
+			wrap.Render(s.Muted.Render("Binaries, man pages"+
+				desktopClause(entry.pkg, entry.installed)+
+				resourceClause(entry.pkg, entry.installed)+" are replaced.")),
+			"",
+			// Same warning the switch carries, for the same reason: this is the
+			// one part of the operation that cannot be rebuilt.
+			wrap.Render(s.Muted.Render(
+				"Its configuration directory is deleted and recreated — any changes you made there are lost:")),
+			wrap.Render(s.Muted.Render(filepath.Join(m.config.Paths.Configs, entry.pkg.Name))),
+		)
 	case actionRemove:
 		lines = append(lines,
 			wrap.Render(s.Muted.Render("Removes binaries, man pages"+

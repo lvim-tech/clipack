@@ -69,8 +69,9 @@ Run `clipack` with no arguments:
 | `tab`, `shift+tab` | switch between **All**, **Installed** and **Updates** |
 | `i` or `enter` | install the selected package |
 | `u` | update it |
+| `R` | rebuild it at the ref it is already on, picking up a registry entry that changed without the version moving |
 | `x` | remove it |
-| | *a package offers install, or update and remove — never both* |
+| | *a package offers install, or update, rebuild and remove — never both* |
 | `m` | toggle between the `version` and `commit` install method |
 | `r` | refresh the registry cache |
 | `p` | add `bin/` to the current shell's startup file — offered only while that shell cannot find it |

@@ -57,6 +57,13 @@ const (
 	actionInstall
 	actionUpdate
 	actionRemove
+	// actionReinstall rebuilds a package that is already installed and current.
+	//
+	// It exists because a version is not the only thing that changes. A registry
+	// entry can gain a resource tree or a menu entry while its version stands
+	// still, and until this was offered the only way to pick that up was to
+	// remove the package and install it again.
+	actionReinstall
 	// actionSwitchMethod repins an installed package to the other ref. It runs
 	// the same rebuild an update does, just with a method the manifest does not
 	// already record.
@@ -72,6 +79,8 @@ func (a action) label() string {
 		return "Update"
 	case actionRemove:
 		return "Remove"
+	case actionReinstall:
+		return "Reinstall"
 	case actionSwitchMethod:
 		return "Switch"
 	default:
@@ -89,6 +98,8 @@ func (a action) past() string {
 		return "updated"
 	case actionRemove:
 		return "removed"
+	case actionReinstall:
+		return "reinstalled"
 	case actionSwitchMethod:
 		return "switched"
 	default:
@@ -786,6 +797,10 @@ func (m Model) contextualKeys() keyMap {
 	keys.Install.SetEnabled(ok && !installed)
 	keys.Update.SetEnabled(installed && entry.hasUpdate())
 	keys.Remove.SetEnabled(installed)
+	// Offered for anything installed, including what is already current: a
+	// registry entry can change without its version moving, and that is the case
+	// no other key covers.
+	keys.Reinstall.SetEnabled(installed)
 
 	// Marking is per tab, and the tab's own action is the only one that runs on
 	// a batch. Its label carries the count, so "u update" becoming "u update 3"
@@ -966,6 +981,9 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(keyMsg, m.keys.Update):
 			return m.requestAction(actionUpdate)
+
+		case key.Matches(keyMsg, m.keys.Reinstall):
+			return m.requestAction(actionReinstall)
 
 		case key.Matches(keyMsg, m.keys.Remove):
 			return m.requestAction(actionRemove)
@@ -1178,14 +1196,20 @@ func (m Model) requestAction(a action) (tea.Model, tea.Cmd) {
 	}
 
 	// What a package offers depends on whether it is installed: install applies
-	// only to what is not, update and remove only to what is. Reinstalling over
-	// an existing install is deliberately not offered — it leaves the previous
-	// version's binaries and man pages behind, because only update knows to
-	// clean them up from the old manifest.
+	// only to what is not, update, reinstall and remove only to what is.
+	//
+	// A plain install over an existing one stays refused. It would leave the
+	// previous version's binaries and man pages behind, because only the update
+	// path reads the old manifest first — which is exactly what reinstall does.
 	switch a {
 	case actionInstall:
 		if entry.installed != nil {
-			m.status = entry.pkg.Name + " is installed — u to update, x to remove"
+			m.status = entry.pkg.Name + " is installed — u to update, R to rebuild, x to remove"
+			return m, nil
+		}
+	case actionReinstall:
+		if entry.installed == nil {
+			m.status = entry.pkg.Name + " is not installed — i to install"
 			return m, nil
 		}
 	case actionUpdate:
@@ -1338,7 +1362,10 @@ func (m Model) startOperation() (tea.Model, tea.Cmd) {
 				// The installer stamps the method onto the package it is given,
 				// so it gets a copy rather than the cached registry entry.
 				err = in.Install(clonePackage(entry.pkg), method)
-			case actionUpdate:
+			case actionUpdate, actionReinstall:
+				// Update is the rebuild. A reinstall differs only in that the ref
+				// it rebuilds to is the one already installed, so nothing here
+				// has to tell them apart.
 				err = in.Update(clonePackage(entry.pkg), installedMethod(entry, method))
 			case actionRemove:
 				// Remove works from the installed manifest, the only record of

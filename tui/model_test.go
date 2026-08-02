@@ -408,8 +408,11 @@ func TestEscapeLeavesTheDetailPane(t *testing.T) {
 
 func TestMovementFollowsTheFocus(t *testing.T) {
 	m := browseModel(t)
-	// A short pane, so the cursor runs past the bottom quickly.
-	m.detail.Height = 4
+	// A short pane, so the cursor runs past the bottom quickly. Done through the
+	// window size rather than by assigning detail.Height: that field belongs to
+	// layout(), which reruns whenever the help line changes height — and it does,
+	// as soon as the selection moves onto an installed package and gains a key.
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 120, Height: 12})
 
 	// With the list focused, j moves the selection and leaves the detail at
 	// the top.
@@ -567,6 +570,27 @@ func TestRequestActionGuards(t *testing.T) {
 			key:         "x",
 			wantScreen:  screenConfirm,
 		},
+		{
+			// The case no other key covers: the version has not moved, but the
+			// registry entry may have.
+			name:        "rebuild a package that is current",
+			packageName: "fzf",
+			key:         "R",
+			wantScreen:  screenConfirm,
+		},
+		{
+			name:        "rebuild a package that is behind",
+			packageName: "yazi",
+			key:         "R",
+			wantScreen:  screenConfirm,
+		},
+		{
+			name:        "rebuild a package that is not installed",
+			packageName: "bat",
+			key:         "R",
+			wantScreen:  screenBrowse,
+			wantStatus:  "not installed",
+		},
 	}
 
 	for _, tt := range tests {
@@ -612,6 +636,10 @@ func TestConfirmViewDescribesTheAction(t *testing.T) {
 		{"bat", "i", []string{"Install bat?", "method", "v0.25.0"}},
 		{"yazi", "u", []string{"Update yazi?", "installed", "available"}},
 		{"fzf", "x", []string{"Remove fzf?", "binaries"}},
+		// A rebuild has to say the two things that distinguish it from an
+		// update: nothing about the version changes, and the configuration
+		// directory does not survive.
+		{"fzf", "R", []string{"Reinstall fzf?", "Nothing about the version changes", "configuration directory is deleted"}},
 	}
 
 	for _, tt := range tests {

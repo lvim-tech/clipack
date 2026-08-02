@@ -169,6 +169,15 @@ type Model struct {
 	// detailFor is the package currently rendered in the detail pane.
 	detailFor string
 
+	// footerHeight is the height layout() last budgeted for the footer. The
+	// help line lists only the keys that apply right now, so it grows and
+	// shrinks as the tab, the focus and the marks change — and when it grows
+	// past what the body was sized for, the whole view is one line too tall and
+	// the terminal scrolls the title off the top. Update compares against this
+	// after every message rather than relying on each of those call sites to
+	// remember to re-lay-out, which is exactly what went wrong before.
+	footerHeight int
+
 	// Detail pane text cursor and vi-style selection.
 	detailBuf detailBuffer
 	// logBuf is the build log, addressable line by line so the same selection
@@ -307,14 +316,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenSetup:
 		return m.updateSetup(msg)
 	case screenBrowse:
-		return m.updateBrowse(msg)
+		return relayoutIfNeeded(m.updateBrowse(msg))
 	case screenConfirm:
-		return m.updateConfirm(msg)
+		return relayoutIfNeeded(m.updateConfirm(msg))
 	case screenRun:
-		return m.updateRun(msg)
+		return relayoutIfNeeded(m.updateRun(msg))
 	}
 
 	return m, nil
+}
+
+// relayoutIfNeeded re-runs the layout when the footer no longer occupies the
+// height it was budgeted. It wraps the per-screen handlers so that any state
+// change reaching the help line is accounted for, whether or not whoever wrote
+// that state change thought about the layout.
+func relayoutIfNeeded(model tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m, ok := model.(Model)
+	if !ok || m.width == 0 || m.height == 0 {
+		return model, cmd
+	}
+	if lipgloss.Height(m.footer()) != m.footerHeight {
+		m.layout()
+	}
+	return m, cmd
 }
 
 // ---------------------------------------------------------------------------
@@ -351,9 +375,11 @@ func (m *Model) layout() {
 	// falls off the right edge.
 	m.help.Width = 0
 
+	m.footerHeight = lipgloss.Height(m.footer())
+
 	bodyHeight := m.height -
 		lipgloss.Height(m.header()) -
-		lipgloss.Height(m.footer()) -
+		m.footerHeight -
 		paneFrameHeight
 	if bodyHeight < 4 {
 		bodyHeight = 4

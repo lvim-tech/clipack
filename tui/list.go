@@ -352,8 +352,18 @@ func newPackageList(s Styles) list.Model {
 	l.SetFilteringEnabled(true)
 	l.InfiniteScrolling = false
 	l.Filter = substringFilter
+	// The Styles struct AND the input itself. bubbles reads Styles.Filter* exactly once, inside
+	// list.New(), to build FilterInput — so assigning them afterwards fills in a struct nobody
+	// looks at again, and the filter kept the library's own defaults through every theme change:
+	// a neon yellow prompt (#ECFD65) and a pink cursor (#EE6FF8), neither of which is in any
+	// palette here. Both are kept: the struct for anything that rebuilds the input, the input
+	// for the one that already exists.
 	l.Styles.FilterPrompt = s.Prompt
 	l.Styles.FilterCursor = s.Prompt
+	l.FilterInput.PromptStyle = s.Prompt
+	l.FilterInput.Cursor.Style = s.Prompt
+	l.FilterInput.TextStyle = s.Text
+	l.FilterInput.PlaceholderStyle = s.Muted
 	l.Styles.NoItems = s.Muted.Padding(1, 2)
 
 	// bubbles binds h/l and ←/→ to paging. clipack needs those for moving

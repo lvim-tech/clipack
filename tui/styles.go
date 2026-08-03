@@ -98,7 +98,11 @@ func NewStyles(theme cnfg.Theme) Styles {
 		DetailTitle: setFg(lipgloss.NewStyle().Bold(true), accentAlt),
 
 		BadgeInstalled: setFg(lipgloss.NewStyle().Bold(true), success),
-		BadgeUpdate:    setFg(lipgloss.NewStyle().Bold(true), warning),
+		// NOT bold, and that is what separates it from an error. The generated themes give
+		// `warning` and `error` the same red, because a palette that rules out magenta and yellow
+		// has four hues left for five roles — so the two are told apart by weight instead. Bold
+		// here made an available update look exactly like a failure.
+		BadgeUpdate: setFg(lipgloss.NewStyle(), warning),
 
 		Err:   setFg(lipgloss.NewStyle().Bold(true), failure),
 		Warn:  setFg(lipgloss.NewStyle(), warning),

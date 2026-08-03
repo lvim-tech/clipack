@@ -205,15 +205,23 @@ var builtinThemes = map[string]Theme{
 		Border: DefaultBorder,
 		Icons:  DefaultIcons,
 		Colors: ColorSet{
-			Accent:    Color{Light: "#6c3ad6", Dark: "#b48ead"},
-			AccentAlt: Color{Light: "#0a7d78", Dark: "#88c0d0"},
+			// No magenta and no yellow, the same rule the generated themes follow: those two hues
+			// are not part of this desktop, and they were the whole of what read as foreign here —
+			// a salmon title badge and an olive update badge. Nord's own blue and orange replace
+			// them. Measured against the backgrounds they are drawn on: 6.33 and 5.99 on the dark
+			// one, 6.60 and 5.47 on the light, against a floor of 3.
+			Accent:    Color{Light: "#2f5d9e", Dark: "#81a1c1"},
+			AccentAlt: Color{Light: "#a2542b", Dark: "#d08770"},
 			Text:      Color{Light: "#1c1c1c", Dark: "#e5e9f0"},
 			Muted:     Color{Light: "#6b6b6b", Dark: "#7f8896"},
 			Subtle:    Color{Light: "#c8c8c8", Dark: "#3b4252"},
 			Success:   Color{Light: "#217a3d", Dark: "#a3be8c"},
-			Warning:   Color{Light: "#9a6700", Dark: "#ebcb8b"},
-			Error:     Color{Light: "#b3261e", Dark: "#bf616a"},
-			TitleFg:   Color{Light: "#ffffff", Dark: "#1c1c1c"},
+			// The SAME red as Error, on purpose. Ruling out magenta and yellow leaves four hues for
+			// five roles, so these two share one and are told apart by weight: Err is bold, Warn
+			// and BadgeUpdate are not (NewStyles, tui/styles.go).
+			Warning: Color{Light: "#b3261e", Dark: "#bf616a"},
+			Error:   Color{Light: "#b3261e", Dark: "#bf616a"},
+			TitleFg: Color{Light: "#ffffff", Dark: "#1c1c1c"},
 		},
 	},
 	"mono": {

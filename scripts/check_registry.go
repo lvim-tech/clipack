@@ -53,13 +53,21 @@ type Package struct {
 }
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] == "" {
-		log.Fatal("usage: check_registry <github-token>")
+	// From the ENVIRONMENT, not from a command-line argument. An argument is
+	// visible to every process on the machine through /proc and to anything
+	// reading a process list — on a shared CI runner that is not a theoretical
+	// audience. The first argument is still accepted so a local run can pass one.
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" && len(os.Args) > 1 {
+		token = os.Args[1]
+	}
+	if token == "" {
+		log.Fatal("set GITHUB_TOKEN (or pass a token as the first argument)")
 	}
 
 	ctx := context.Background()
 	client := github.NewClient(oauth2.NewClient(ctx,
-		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Args[1]})))
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})))
 
 	// Fail before touching anything if the token is not usable. The absence of
 	// this check is what hid an expired token for eight months.

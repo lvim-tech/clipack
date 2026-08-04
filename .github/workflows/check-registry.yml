@@ -10,11 +10,11 @@ jobs:
       contents: write
     steps:
       - name: Checkout application repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Go
         # Read from go.mod so a toolchain bump here cannot silently break the
         # scheduled run.
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install dependencies

@@ -31,20 +31,26 @@ func TestLoadConfigBootstrapsOnFirstRun(t *testing.T) {
 	// The trailing "n" declines the shell-configuration prompt.
 	withStdin(t, installDir+"\nn\n")
 
-	var config *cnfg.Config
 	var err error
-	capture(t, func() { config, err = loadConfig() })
+	capture(t, func() { _, err = loadConfig() })
 
-	if err != nil {
-		t.Fatalf("loadConfig() error = %v", err)
+	// The file is written — every subcommand starts here, so the tree has to
+	// exist whichever one the user reached for first — but clipack ships no
+	// registry, so the run stops with instructions rather than reaching for
+	// somebody else's.
+	if err == nil {
+		t.Fatal("loadConfig() error = nil, want it to ask for a registry")
 	}
-	// Every subcommand starts here, so a fresh installation has to be usable
-	// whichever command the user reaches for first.
-	if config.Paths.Base != installDir {
-		t.Errorf("Base = %q, want %q", config.Paths.Base, installDir)
+	for _, want := range []string{"registry", "url:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
 	}
 	if !cnfg.Exists() {
 		t.Error("loadConfig() did not write config.yaml")
+	}
+	if _, statErr := os.Stat(installDir); statErr != nil {
+		t.Errorf("the installation directory was not created: %v", statErr)
 	}
 }
 

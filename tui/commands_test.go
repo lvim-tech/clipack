@@ -191,12 +191,19 @@ func TestSaveConfigCmd(t *testing.T) {
 
 	installDir := filepath.Join(t.TempDir(), "packages")
 
-	msg, ok := saveConfigCmd(installDir, false)().(setupDoneMsg)
+	const registryURL = "https://github.com/owner/repo.git"
+
+	msg, ok := saveConfigCmd(installDir, registryURL, false)().(setupDoneMsg)
 	if !ok {
 		t.Fatal("saveConfigCmd did not return a setupDoneMsg")
 	}
 	if msg.err != nil {
 		t.Fatalf("err = %v", msg.err)
+	}
+	// The wizard's second answer has to reach the file: clipack has no default
+	// registry to fall back on, so losing it writes a config that cannot load.
+	if msg.config != nil && msg.config.Registry.URL != registryURL {
+		t.Errorf("Registry.URL = %q, want %q", msg.config.Registry.URL, registryURL)
 	}
 	if msg.config == nil {
 		t.Fatal("no config was returned")
@@ -228,7 +235,7 @@ func TestSaveConfigCmdReportsFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := saveConfigCmd(filepath.Join(t.TempDir(), "packages"), false)().(setupDoneMsg)
+	msg := saveConfigCmd(filepath.Join(t.TempDir(), "packages"), "https://github.com/owner/repo.git", false)().(setupDoneMsg)
 	if msg.err == nil {
 		t.Error("err = nil, want the write failure reported to the wizard")
 	}
@@ -243,7 +250,7 @@ func TestSaveConfigCmdShellFailureIsNotFatal(t *testing.T) {
 	// is still usable, so setup must not be blocked by it.
 	t.Setenv(cnfg.ShellOverrideEnv, "/bin/nonexistent-shell")
 
-	msg := saveConfigCmd(filepath.Join(t.TempDir(), "packages"), true)().(setupDoneMsg)
+	msg := saveConfigCmd(filepath.Join(t.TempDir(), "packages"), "https://github.com/owner/repo.git", true)().(setupDoneMsg)
 	if msg.err != nil {
 		t.Errorf("err = %v, want the shell failure to be tolerated", msg.err)
 	}

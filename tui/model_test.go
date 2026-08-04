@@ -807,9 +807,26 @@ func TestSetupFlow(t *testing.T) {
 		t.Error("tab did not toggle the checkbox back")
 	}
 
+	// First enter answers the installation directory and moves on to the
+	// registry — clipack has no default for it, so the wizard has to ask.
+	m = applyMsg(t, m, keyMsg("enter"))
+	if m.screen != screenSetup {
+		t.Fatalf("screen = %v, want the wizard still open for the registry", m.screen)
+	}
+	if !strings.Contains(m.View(), "Registry URL") {
+		t.Errorf("second step does not ask for the registry:\n%s", m.View())
+	}
+
+	// An empty answer is refused rather than guessed at.
+	m = applyMsg(t, m, keyMsg("enter"))
+	if m.screen != screenSetup || m.err == nil {
+		t.Errorf("an empty registry was accepted: screen = %v, err = %v", m.screen, m.err)
+	}
+
+	m.input.SetValue("https://github.com/owner/repo.git")
 	m, cmd := applyMsgCmd(t, m, keyMsg("enter"))
 	if m.screen != screenLoading {
-		t.Errorf("screen = %v after enter, want screenLoading", m.screen)
+		t.Errorf("screen = %v after the registry was given, want screenLoading", m.screen)
 	}
 	if cmd == nil {
 		t.Error("enter did not schedule the config save")

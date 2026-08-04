@@ -69,16 +69,31 @@ func (m Model) viewSetup() string {
 	body := []string{
 		s.Title.Render(" clipack ") + "  " + s.HeaderMeta.Render("first run"),
 		"",
-		"No configuration was found. Choose where clipack should keep",
-		s.Muted.Render("binaries, configs, build trees, man pages and the registry cache."),
-		"",
-		s.DetailTitle.Render("Installation directory"),
-		m.input.View(),
+	}
+	if m.setupStep == 0 {
+		body = append(body,
+			"No configuration was found. Choose where clipack should keep",
+			s.Muted.Render("binaries, configs, build trees, man pages and the registry cache."),
+			"",
+			s.DetailTitle.Render("Installation directory"),
+			m.input.View(),
+		)
+	} else {
+		body = append(body,
+			"clipack ships no registry — it is the tool, not the content.",
+			s.Muted.Render("A registry is a git repository with an index.yaml listing packages."),
+			s.Muted.Render("For a private one, add a token to the config file afterwards."),
+			"",
+			s.DetailTitle.Render("Registry URL"),
+			m.input.View(),
+		)
+	}
+	body = append(body,
 		"",
 		fmt.Sprintf("%s  add bin/ and man/ to your shell rc file", checkbox),
 		"",
 		s.Muted.Render(m.hint("enter confirm", "tab toggle", "esc quit")),
-	}
+	)
 
 	if m.err != nil {
 		body = append(body, "", s.Err.Render("Error: "+m.err.Error()))

@@ -1,6 +1,7 @@
 package cnfg
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,8 +105,10 @@ func TestNewDefaultConfig(t *testing.T) {
 		}
 	}
 
-	if config.Registry.URL != DefaultRegistryURL {
-		t.Errorf("Registry.URL = %q, want the default", config.Registry.URL)
+	// No registry: clipack is the tool, the registry is the content, and a
+	// built-in one made somebody else's repository look like part of clipack.
+	if config.Registry.URL != "" {
+		t.Errorf("Registry.URL = %q, want it empty — clipack ships no registry", config.Registry.URL)
 	}
 	if config.Registry.Branch != DefaultBranch {
 		t.Errorf("Registry.Branch = %q, want %q", config.Registry.Branch, DefaultBranch)
@@ -135,6 +138,7 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	installDir := filepath.Join(t.TempDir(), "packages")
 
 	config := NewDefaultConfig(installDir)
+	config.Registry.URL = "https://github.com/owner/repo.git"
 	config.Registry.Token = "secret-token"
 	config.Options.InstallMethod = "commit"
 
@@ -259,8 +263,8 @@ func TestValidateConfigErrors(t *testing.T) {
 	}{
 		{
 			name:   "missing registry url",
-			mutate: func(c *Config) { c.Registry.URL = "" },
-			want:   "registry URL",
+			mutate: func(c *Config) { c.Registry.URL = ""; c.Registry.RegistryRepoURL = "" },
+			want:   "no registry is configured",
 		},
 		{
 			name:   "empty path",
@@ -363,6 +367,7 @@ func TestCreateDefaultConfigIsNoOpWhenPresent(t *testing.T) {
 	withHome(t)
 
 	config := NewDefaultConfig(filepath.Join(t.TempDir(), "original"))
+	config.Registry.URL = "https://github.com/owner/repo.git"
 	config.Registry.Token = "keep-me"
 	if err := config.Save(); err != nil {
 		t.Fatal(err)
@@ -395,17 +400,13 @@ func TestCreateDefaultConfigFirstRun(t *testing.T) {
 		t.Fatalf("CreateDefaultConfig() error = %v", err)
 	}
 
-	config, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig() after CreateDefaultConfig error = %v", err)
+	// The file is written and the tree created, but it is not yet loadable:
+	// the registry is the one field with nothing to fall back to.
+	if _, err := LoadConfig(); !errors.Is(err, ErrNoRegistry) {
+		t.Fatalf("LoadConfig() error = %v, want ErrNoRegistry", err)
 	}
-	if config.Paths.Base != installDir {
-		t.Errorf("Base = %q, want %q", config.Paths.Base, installDir)
-	}
-	if config.Registry.URL != DefaultRegistryURL {
-		t.Errorf("Registry.URL = %q, want the default", config.Registry.URL)
-	}
-	for _, dir := range config.Dirs() {
+
+	for _, dir := range NewDefaultConfig(installDir).Dirs() {
 		if _, err := os.Stat(dir); err != nil {
 			t.Errorf("%s was not created", dir)
 		}
@@ -484,5 +485,95 @@ func TestUpdateConfigPreservesRegistryAndOptions(t *testing.T) {
 	}
 	if loaded.Options.CleanupBuild {
 		t.Error("CleanupBuild = true, want the configured false preserved")
+	}
+}
+
+// A configuration with no registry is an unfinished setup, not a broken file,
+// and has to be recognisable as such — front-ends answer it with instructions
+// instead of a wrapped parse error.
+func TestLoadConfigWithoutARegistrySaysWhatIsMissing(t *testing.T) {
+	withHome(t)
+
+	dir, err := ConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\npaths:\n  base: /a\n  registry: /a/r\n  bin: /a/b\n  configs: /a/c\n  build: /a/bu\n  man: /a/m\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = LoadConfig()
+	if !errors.Is(err, ErrNoRegistry) {
+		t.Fatalf("LoadConfig() error = %v, want ErrNoRegistry", err)
+	}
+}
+
+// The help is the whole answer a user gets, so it has to carry the two things
+// they cannot look up: which file, and which field.
+func TestRegistryHelpNamesTheFileAndTheField(t *testing.T) {
+	withHome(t)
+
+	help := RegistryHelp()
+	path, err := ConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{path, "url:", "branch:", "token"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("RegistryHelp() does not mention %q:\n%s", want, help)
+		}
+	}
+}
+
+// A configuration written today must not carry an empty registryRepoURL: the
+// field is derived from url, and showing it blank reads as a second thing the
+// user is required to fill in.
+func TestSavedConfigOmitsTheDerivedRepoURL(t *testing.T) {
+	withHome(t)
+
+	config := NewDefaultConfig(t.TempDir())
+	config.Registry.URL = "https://github.com/owner/repo.git"
+	if err := config.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := ConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "registryRepoURL") {
+		t.Errorf("config.yaml still writes registryRepoURL:\n%s", written)
+	}
+}
+
+// An older configuration named the API endpoint and nothing else. resolveRepo
+// reads owner/repo from either field, so that file still describes a registry
+// and must keep loading.
+func TestLoadConfigAcceptsOnlyTheLegacyRepoURL(t *testing.T) {
+	withHome(t)
+
+	dir, err := ConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nregistry:\n  registryRepoURL: https://api.github.com/repos/owner/repo/contents\n" +
+		"paths:\n  base: /a\n  registry: /a/r\n  bin: /a/b\n  configs: /a/c\n  build: /a/bu\n  man: /a/m\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig() error = %v, want a legacy config to keep working", err)
 	}
 }

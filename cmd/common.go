@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +21,11 @@ func loadConfig() (*cnfg.Config, error) {
 
 	config, err := cnfg.LoadConfig()
 	if err != nil {
+		// The one error worth answering with instructions rather than a
+		// wrapped message: nothing is broken, the setup is unfinished.
+		if errors.Is(err, cnfg.ErrNoRegistry) {
+			return nil, errors.New(cnfg.RegistryHelp())
+		}
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 

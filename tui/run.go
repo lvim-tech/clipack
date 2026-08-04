@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +20,11 @@ func Run() error {
 	if cnfg.Exists() {
 		loaded, err := cnfg.LoadConfig()
 		if err != nil {
+			// Printed rather than wrapped: an unfinished setup needs the
+			// instructions, and inside an alt-screen TUI they would be lost.
+			if errors.Is(err, cnfg.ErrNoRegistry) {
+				return errors.New(cnfg.RegistryHelp())
+			}
 			return fmt.Errorf("could not load configuration: %w", err)
 		}
 		// Directories may have been removed since the config was written.

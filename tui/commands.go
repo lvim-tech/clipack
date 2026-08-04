@@ -162,9 +162,10 @@ func waitForEventCmd(stream *opStream) tea.Cmd {
 }
 
 // saveConfigCmd writes a freshly built configuration to disk.
-func saveConfigCmd(installDir string, addToShell bool) tea.Cmd {
+func saveConfigCmd(installDir, registryURL string, addToShell bool) tea.Cmd {
 	return func() tea.Msg {
 		config := cnfg.NewDefaultConfig(installDir)
+		config.Registry.URL = registryURL
 		if err := config.Save(); err != nil {
 			return setupDoneMsg{err: err}
 		}

@@ -10,6 +10,7 @@
 package cnfg
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,21 +21,51 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Default registry endpoints used when a config is created from scratch.
+// Defaults applied when a config leaves them out. There is deliberately no
+// default REGISTRY here: clipack is the tool, the registry is the content, and
+// a built-in one made lvim-tech's registry look like part of the program. A
+// fresh install now names its own, and says so rather than quietly reaching for
+// somebody else's.
 const (
-	DefaultRegistryURL     = "https://github.com/lvim-tech/clipack-registry.git"
-	DefaultRegistryRepoURL = "https://api.github.com/repos/lvim-tech/clipack-registry/contents"
-	DefaultBranch          = "main"
-	DefaultUpdateInterval  = 24 * time.Hour
+	DefaultBranch         = "main"
+	DefaultUpdateInterval = 24 * time.Hour
 )
+
+// ErrNoRegistry is returned when the configuration names no registry. It is a
+// sentinel so front-ends can tell "you have not finished setting up" apart from
+// a corrupt file, and answer with instructions instead of a stack of wrapping.
+var ErrNoRegistry = errors.New("no registry is configured")
 
 // RegistryConfig holds the configuration for the registry.
 type RegistryConfig struct {
-	URL             string        `yaml:"url"`
-	RegistryRepoURL string        `yaml:"registryRepoURL"`
+	URL string `yaml:"url"`
+	// RegistryRepoURL is optional and redundant: resolveRepo derives
+	// owner/repo from either field, so URL alone is enough. Kept because
+	// existing configurations carry it, omitted from new ones.
+	RegistryRepoURL string        `yaml:"registryRepoURL,omitempty"`
 	Token           string        `yaml:"token,omitempty"`
 	Branch          string        `yaml:"branch"`
 	UpdateInterval  time.Duration `yaml:"update_interval"`
+}
+
+// RegistryHelp is the instruction printed whenever no registry is configured.
+// One field, one example — registryRepoURL is derived, and the token is only
+// needed for a private repository.
+func RegistryHelp() string {
+	path, err := ConfigPath()
+	if err != nil {
+		path = "~/.config/clipack/config.yaml"
+	}
+	return fmt.Sprintf(`clipack does not ship a registry — it is the tool, not the content.
+
+Name one in %s:
+
+    registry:
+        url: https://github.com/<owner>/<repo>.git
+        branch: main
+        # token: <personal access token>   # only for a private repository
+
+A registry is a git repository with an index.yaml listing package definitions.`, path)
 }
 
 // PathsConfig holds the configuration for various paths used in the application.
@@ -121,11 +152,11 @@ func ExpandPath(path string) string {
 func NewDefaultConfig(installDir string) *Config {
 	installDir = ExpandPath(installDir)
 	return &Config{
+		// No URL: the user names their own registry. The keys are still
+		// written out, so the file shows where it goes.
 		Registry: RegistryConfig{
-			URL:             DefaultRegistryURL,
-			RegistryRepoURL: DefaultRegistryRepoURL,
-			Branch:          DefaultBranch,
-			UpdateInterval:  DefaultUpdateInterval,
+			Branch:         DefaultBranch,
+			UpdateInterval: DefaultUpdateInterval,
 		},
 		Paths: PathsConfig{
 			Base:     installDir,
@@ -202,6 +233,11 @@ func LoadConfig() (*Config, error) {
 	}
 
 	if err := validateConfig(&config); err != nil {
+		// Passed through unwrapped: an unfinished setup is not an invalid
+		// file, and the caller answers it with instructions.
+		if errors.Is(err, ErrNoRegistry) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -210,8 +246,8 @@ func LoadConfig() (*Config, error) {
 
 // validateConfig fills in defaults and rejects unusable configurations.
 func validateConfig(config *Config) error {
-	if config.Registry.URL == "" {
-		return fmt.Errorf("registry URL is required")
+	if config.Registry.URL == "" && config.Registry.RegistryRepoURL == "" {
+		return ErrNoRegistry
 	}
 	if config.Registry.Branch == "" {
 		config.Registry.Branch = DefaultBranch
@@ -272,6 +308,11 @@ func CreateDefaultConfig() error {
 	for _, dir := range config.Dirs() {
 		fmt.Printf("- %s\n", dir)
 	}
+
+	// Said here, at creation, as well as at every load that fails on it: this
+	// is the one field the file cannot be complete without, and the moment it
+	// is written is the moment the user is looking at the output.
+	fmt.Printf("\n%s\n", RegistryHelp())
 
 	if utils.AskForConfirmation("Do you want to add the bin and man paths to your shell configuration?") {
 		if err := AddPathsToShellConfig(config.Paths.Bin, config.Paths.Man, IntegrationPath(config.Paths.Configs)); err != nil {

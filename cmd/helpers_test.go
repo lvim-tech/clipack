@@ -22,6 +22,10 @@ func setupCmdTest(t *testing.T) *cnfg.Config {
 	t.Setenv(cnfg.ShellOverrideEnv, "/bin/bash")
 
 	config := cnfg.NewDefaultConfig(filepath.Join(t.TempDir(), "packages"))
+	// Named explicitly: clipack ships no registry, so a configuration without
+	// one does not load at all. The commands under test never reach it — the
+	// cache is seeded directly — but it has to be there to get past loadConfig.
+	config.Registry.URL = "https://github.com/owner/repo.git"
 	if err := config.Save(); err != nil {
 		t.Fatalf("writing the test configuration: %v", err)
 	}

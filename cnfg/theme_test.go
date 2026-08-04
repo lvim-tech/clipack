@@ -424,6 +424,7 @@ func TestConfigCarriesTheTheme(t *testing.T) {
 	withHome(t)
 
 	config := NewDefaultConfig(filepath.Join(t.TempDir(), "packages"))
+	config.Registry.URL = "https://github.com/owner/repo.git"
 	config.Theme = Theme{
 		Name:   "mono",
 		Border: "thick",
@@ -456,6 +457,7 @@ func TestLoadConfigRejectsABadTheme(t *testing.T) {
 	withHome(t)
 
 	config := NewDefaultConfig(filepath.Join(t.TempDir(), "packages"))
+	config.Registry.URL = "https://github.com/owner/repo.git"
 	config.Theme.Border = "squiggly"
 	if err := config.Save(); err != nil {
 		t.Fatal(err)

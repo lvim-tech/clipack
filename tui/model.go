@@ -197,8 +197,13 @@ type Model struct {
 	runStepOf   int
 	runStepText string
 
-	// Setup wizard.
+	// Setup wizard. Two questions over one input: the installation directory,
+	// then the registry — which clipack no longer has a default for, so a
+	// wizard that did not ask would write a configuration its own next step
+	// cannot load.
 	setupAddShell bool
+	setupStep     int
+	setupDir      string
 
 	// shellStatus is where the shell clipack was started from stands with
 	// respect to the managed bin directory, and shellKnown whether that could be
@@ -494,13 +499,26 @@ func (m Model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setupAddShell = !m.setupAddShell
 			return m, nil
 		case "enter":
-			dir := strings.TrimSpace(m.input.Value())
-			if dir == "" {
-				dir = cnfg.DefaultInstallDir()
+			value := strings.TrimSpace(m.input.Value())
+			if m.setupStep == 0 {
+				if value == "" {
+					value = cnfg.DefaultInstallDir()
+				}
+				m.setupDir = value
+				m.setupStep = 1
+				m.err = nil
+				m.input.SetValue("")
+				return m, nil
+			}
+			// No fallback: there is nothing sensible to guess, and guessing is
+			// what the built-in default used to do.
+			if value == "" {
+				m.err = errors.New("a registry URL is required — clipack ships none")
+				return m, nil
 			}
 			m.screen = screenLoading
 			m.status = "Creating configuration…"
-			return m, tea.Batch(m.spinner.Tick, saveConfigCmd(dir, m.setupAddShell))
+			return m, tea.Batch(m.spinner.Tick, saveConfigCmd(m.setupDir, value, m.setupAddShell))
 		}
 	}
 

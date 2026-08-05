@@ -33,10 +33,16 @@ const (
 )
 
 // Source describes where the package sources come from.
+//
+// No Ref. It used to be here, and 82 of the 83 entries carried one — mostly
+// `master` or `main` — but nothing ever read it: what a build checks out comes
+// from `version` or `commit`, whichever the install method names, and
+// expandSteps is where that happens. A field that is parsed and never used
+// reads like a setting, and this one read like the answer to "which branch is
+// built", which it never was.
 type Source struct {
 	Type string `yaml:"type,omitempty"`
 	URL  string `yaml:"url,omitempty"`
-	Ref  string `yaml:"ref,omitempty"`
 }
 
 // Install holds the installation steps and related data.

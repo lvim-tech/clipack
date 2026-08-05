@@ -19,23 +19,26 @@ jobs:
           go-version-file: go.mod
       - name: Install dependencies
         run: go mod download
-      - name: Clone registry repository
-        # Anonymously. clipack-registry is public, so the clone needs no
-        # credentials — and a token inside the URL is readable from the process
-        # list while git runs, which is the one thing worth avoiding here.
-        run: git clone https://github.com/lvim-tech/clipack-registry.git registry
-      - name: Configure Git for registry
-        # The token is needed for the PUSH, and it reaches git through a file
-        # rather than a command line: 600, inside .git, gone with the runner.
+      - name: Configure Git
+        # BEFORE the clone, and globally, because the CLONE needs the credentials
+        # too: clipack-registry is private. Writing them into registry/.git after
+        # cloning assumed the clone itself needed none, and the first scheduled
+        # run after that assumption failed at `git clone` with exit 128 — the
+        # step below never ran at all.
+        #
+        # Still no token on a command line, which is the point worth keeping: it
+        # reaches git through a 600 file that dies with the runner, never through
+        # an argument readable from the process list.
         env:
           REGISTRY_TOKEN: ${{ secrets.CLIPACK }}
         run: |
-          cd registry
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git config credential.helper 'store --file=.git/credentials'
-          install -m 600 /dev/null .git/credentials
-          printf 'https://oauth2:%s@github.com\n' "$REGISTRY_TOKEN" > .git/credentials
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config --global credential.helper "store --file=$HOME/.git-credentials"
+          install -m 600 /dev/null "$HOME/.git-credentials"
+          printf 'https://oauth2:%s@github.com\n' "$REGISTRY_TOKEN" > "$HOME/.git-credentials"
+      - name: Clone registry repository
+        run: git clone https://github.com/lvim-tech/clipack-registry.git registry
       - name: Run check registry script
         # Through the environment rather than as an argument: an argument is
         # readable from the process list for as long as the step runs.

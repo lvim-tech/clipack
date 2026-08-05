@@ -32,17 +32,21 @@ const (
 	MethodCommit  = "commit"
 )
 
-// Source describes where the package sources come from.
+// Source is where the package sources come from: one URL, and nothing else.
 //
-// No Ref. It used to be here, and 82 of the 83 entries carried one — mostly
-// `master` or `main` — but nothing ever read it: what a build checks out comes
-// from `version` or `commit`, whichever the install method names, and
-// expandSteps is where that happens. A field that is parsed and never used
-// reads like a setting, and this one read like the answer to "which branch is
-// built", which it never was.
+// It carried two more fields, both parsed and never read, and both removed once
+// that was checked field by field against the rest of the schema — which came
+// out clean, they were the only two.
+//
+//   - `ref` named a branch, and 82 of 83 entries set one. What a build checks
+//     out comes from `version` or `commit`, whichever the install method names,
+//     and expandSteps is where that happens. The field read like the answer to
+//     "which branch is built", which it never was.
+//   - `type` said `git` in 81 entries and `script` in two. Nothing branched on
+//     it — the steps say what to do, and every entry's first step is a clone
+//     regardless of which word was here.
 type Source struct {
-	Type string `yaml:"type,omitempty"`
-	URL  string `yaml:"url,omitempty"`
+	URL string `yaml:"url,omitempty"`
 }
 
 // Install holds the installation steps and related data.

@@ -343,6 +343,22 @@ func LoadPackageFromReader(r io.Reader) (*Package, error) {
 }
 
 // CopyFile copies a file from src to dst, preserving the source mode.
+//
+// The write goes to a NEIGHBOUR file and is renamed over the target, and that is not tidiness —
+// it is the difference between reinstalling a program and killing it. Writing in place opens the
+// destination with O_TRUNC, and a destination that some process is RUNNING is mapped into that
+// process: an executable, and every shared library beside it. Truncating a mapped file does not
+// wait for the program to exit; the pages vanish under it and it dies at the next instruction it
+// reads from them — a terminal emulator being reinstalled takes its own session down mid-copy,
+// which is exactly how this was found.
+//
+// rename(2) replaces the directory entry instead. The running program keeps the inode it already
+// opened and lives on happily with the old code until it is restarted, while everything started
+// afterwards gets the new file. The rename is also atomic, so an interrupted install leaves either
+// the old file or the new one, never half of either.
+//
+// The temporary lands in the destination's own directory because rename cannot cross filesystems,
+// and it is removed on every path that does not reach the rename.
 func CopyFile(src, dst string) error {
 	sourceFileStat, err := os.Stat(src)
 	if err != nil {
@@ -363,17 +379,29 @@ func CopyFile(src, dst string) error {
 		return err
 	}
 
-	destination, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, sourceFileStat.Mode().Perm())
+	temp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".clipack-*")
 	if err != nil {
 		return err
 	}
-	defer destination.Close()
+	tempName := temp.Name()
+	defer func() {
+		temp.Close()
+		os.Remove(tempName) // a no-op once the rename has taken the file away
+	}()
 
-	if _, err := io.Copy(destination, source); err != nil {
+	if _, err := io.Copy(temp, source); err != nil {
+		return err
+	}
+	// The mode is set on the temporary, before it becomes the target: a binary that appears at
+	// its final name without its executable bit is a binary something may try to run in between.
+	if err := temp.Chmod(sourceFileStat.Mode().Perm()); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
 		return err
 	}
 
-	return destination.Close()
+	return os.Rename(tempName, dst)
 }
 
 // CopyTree recursively copies the directory src to dst.

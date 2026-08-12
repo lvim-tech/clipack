@@ -190,6 +190,16 @@ type DesktopEntry struct {
 	// Name replaces the displayed name. Empty appends " (clipack)" to whatever
 	// the shipped file says.
 	Name string `yaml:"name,omitempty"`
+	// Terminal names the terminal that opens the program — "kitty -e" — for an
+	// entry whose program is a TUI. Empty leaves the shipped `Terminal=` alone.
+	//
+	// `Terminal=true` hands the choice to the launcher, and the launcher does not
+	// know which terminal the program was set up for. Measured 2026-08-12: a
+	// Terminal=true entry opened yazi in GNOME Console, which draws a different
+	// palette than the theme was written against and cannot show images, so yazi
+	// fell through to ueberzugpp — built here without Wayland, and it aborts.
+	// Naming the terminal is the entry answering rather than asking.
+	Terminal string `yaml:"terminal,omitempty"`
 	// Env is written into Exec as an `env K=V …` prefix. It exists because a
 	// menu entry runs with the session's environment, not the shell's: a
 	// program configured through a variable that config.sh exports (yazi's

@@ -599,10 +599,11 @@ func (in *Installer) installDesktopEntries(p *Package, paths Paths) []error {
 			continue
 		}
 		rewritten := rewriteDesktopEntry(contents, desktopRewrite{
-			BinDir: paths.Bin,
-			Name:   entry.Name,
-			Icon:   icon,
-			Env:    renderDesktopEnv(entry.Env, paths.Base),
+			BinDir:   paths.Bin,
+			Name:     entry.Name,
+			Icon:     icon,
+			Env:      renderDesktopEnv(entry.Env, paths.Base),
+			Terminal: entry.Terminal,
 		})
 		if err := os.WriteFile(dst, rewritten, 0o644); err != nil {
 			in.warnf("could not write desktop entry %s: %v", dst, err)

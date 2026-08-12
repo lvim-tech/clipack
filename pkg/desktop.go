@@ -73,6 +73,19 @@ type desktopRewrite struct {
 	// Icon is an absolute path to an installed icon. Empty leaves Icon= alone,
 	// which falls back to the icon theme.
 	Icon string
+	// Terminal is the command that opens a terminal window, with the flag that
+	// makes it run something — "kitty -e". Set, the entry stops asking the
+	// desktop for a terminal and names one: Exec is wrapped and Terminal= is
+	// turned off.
+	//
+	// It exists because `Terminal=true` is a question, not an answer. The
+	// launcher picks, and what it picks is not the terminal the program was
+	// configured for: measured 2026-08-12, a Terminal=true entry opened in GNOME
+	// Console, whose palette is not the one the theme was written against and
+	// which cannot draw images — so yazi fell through to ueberzugpp, which on
+	// this machine is built without Wayland and aborts. None of that is the
+	// program's fault or the desktop's; it is the entry declining to say.
+	Terminal string
 }
 
 // rewriteDesktopEntry adapts a shipped .desktop file to clipack's installation.
@@ -111,7 +124,16 @@ func rewriteDesktopEntry(contents []byte, rw desktopRewrite) []byte {
 
 		case strings.TrimSpace(key) == "Exec":
 			// Exec is rewritten in every group: the actions launch the program too.
-			out.WriteString(key + "=" + envPrefix(rw.Env) + rewriteExec(value, rw.BinDir) + "\n")
+			// The terminal wraps the whole of it, env prefix included, because the
+			// variables belong to the program and not to the window it runs in.
+			out.WriteString(key + "=" +
+				terminalPrefix(rw.Terminal, rw.BinDir) +
+				envPrefix(rw.Env) + rewriteExec(value, rw.BinDir) + "\n")
+
+		case group == "[Desktop Entry]" && strings.TrimSpace(key) == "Terminal" && rw.Terminal != "":
+			// Named a terminal, the entry is no longer asking for one: Exec now
+			// opens its own window. Left at true the launcher would open a second.
+			out.WriteString(key + "=false\n")
 
 		case group == "[Desktop Entry]" && isNameKey(key) && rw.Name != "":
 			out.WriteString(key + "=" + rw.Name + "\n")
@@ -180,6 +202,20 @@ func rewriteExec(value, binDir string) string {
 		return target
 	}
 	return target + " " + rest
+}
+
+// terminalPrefix renders the terminal command that Exec is wrapped in.
+//
+// Rewritten through rewriteExec like any other program, so a recipe that says
+// "kitty -e" gets clipack's kitty when clipack installed one and the system's
+// otherwise — the same rule that keeps the entry pointing at the build it
+// belongs to.
+func terminalPrefix(terminal, binDir string) string {
+	terminal = strings.TrimSpace(terminal)
+	if terminal == "" {
+		return ""
+	}
+	return rewriteExec(terminal, binDir) + " "
 }
 
 // splitExecProgram separates the program from its arguments, honouring the

@@ -252,3 +252,49 @@ func TestRenderDesktopEnvExpandsBaseAndSorts(t *testing.T) {
 		t.Errorf("renderDesktopEnv() = %v, want %v — sorted, with ${base} expanded", got, want)
 	}
 }
+
+// TestATerminalEntryNamesItsTerminal is the fix for a menu entry that asked instead of answering.
+//
+// `Terminal=true` lets the launcher choose, and the launcher does not know which terminal the
+// program was configured for. Measured 2026-08-12: yazi opened in GNOME Console, drew a palette
+// its theme was not written against, and fell through to ueberzugpp for images — which is built
+// without Wayland on that machine and aborts. Naming the terminal removes all three at once.
+func TestATerminalEntryNamesItsTerminal(t *testing.T) {
+	in := []byte("[Desktop Entry]\nName=Yazi\nTerminal=true\nTryExec=yazi\nExec=yazi %f\n")
+
+	got := string(rewriteDesktopEntry(in, desktopRewrite{Terminal: "kitty -e"}))
+
+	if !strings.Contains(got, "Exec=kitty -e yazi %f") {
+		t.Errorf("Exec is not wrapped in the terminal:\n%s", got)
+	}
+	// Left at true the launcher opens a window for an Exec that already opens one.
+	if !strings.Contains(got, "Terminal=false") {
+		t.Errorf("Terminal was left asking for a window:\n%s", got)
+	}
+	// TryExec is stat'd, never run: wrapping it would make the entry look absent.
+	if !strings.Contains(got, "TryExec=yazi") {
+		t.Errorf("TryExec was rewritten:\n%s", got)
+	}
+}
+
+// TestNoTerminalLeavesTheEntryAlone: the field is opt-in, and an entry that says nothing must come
+// out exactly as it went in.
+func TestNoTerminalLeavesTheEntryAlone(t *testing.T) {
+	in := []byte("[Desktop Entry]\nName=Yazi\nTerminal=true\nExec=yazi %f\n")
+	got := string(rewriteDesktopEntry(in, desktopRewrite{}))
+	if !strings.Contains(got, "Terminal=true") || !strings.Contains(got, "Exec=yazi %f") {
+		t.Errorf("an entry with no terminal named was changed:\n%s", got)
+	}
+}
+
+// TestTheTerminalWrapsTheEnvPrefixToo: the variables belong to the program, not to the window.
+func TestTheTerminalWrapsTheEnvPrefixToo(t *testing.T) {
+	in := []byte("[Desktop Entry]\nTerminal=true\nExec=yazi %f\n")
+	got := string(rewriteDesktopEntry(in, desktopRewrite{
+		Terminal: "kitty -e",
+		Env:      []string{"FOO=bar"},
+	}))
+	if !strings.Contains(got, "Exec=kitty -e env FOO=bar yazi %f") {
+		t.Errorf("the terminal and the env prefix are in the wrong order:\n%s", got)
+	}
+}

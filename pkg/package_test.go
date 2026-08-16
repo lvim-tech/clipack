@@ -56,6 +56,25 @@ func TestCloneURLFromStep(t *testing.T) {
 			want: "https://github.com/sharkdp/bat.git",
 		},
 		{
+			// -c takes its value as a separate field, and that value carries
+			// no leading dash — the scan used to hand it back as the URL.
+			name: "config flag with value",
+			step: "git clone -c http.sslVerify=false https://github.com/sharkdp/bat.git .",
+			want: "https://github.com/sharkdp/bat.git",
+		},
+		{
+			// A value-taking flag nobody listed: the URL still wins because it
+			// is recognisable as one.
+			name: "unknown flag with value",
+			step: "git clone --made-up whatever=1 https://github.com/sharkdp/bat.git .",
+			want: "https://github.com/sharkdp/bat.git",
+		},
+		{
+			name: "scp style remote",
+			step: "git clone git@github.com:sharkdp/bat.git .",
+			want: "git@github.com:sharkdp/bat.git",
+		},
+		{
 			name: "not a clone",
 			step: "cargo build --release",
 			want: "",

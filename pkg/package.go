@@ -269,6 +269,20 @@ func (p *Package) CloneURL() string {
 	return ""
 }
 
+// cloneValueFlags are the "git clone" flags that consume the following field.
+// Every one missing from this list costs correctness rather than tidiness: the
+// value of an unlisted flag carries no leading "-", so the scan below would
+// take "http.sslVerify=false" from "git clone -c http.sslVerify=false <url>"
+// and hand it back as the repository.
+var cloneValueFlags = map[string]bool{
+	"--depth": true, "-b": true, "--branch": true, "-o": true, "--origin": true,
+	"-c": true, "--config": true, "-u": true, "--upload-pack": true,
+	"--reference": true, "--reference-if-able": true, "--separate-git-dir": true,
+	"-j": true, "--jobs": true, "--filter": true, "--template": true,
+	"--shallow-since": true, "--shallow-exclude": true, "--server-option": true,
+	"--bundle-uri": true, "--revision": true,
+}
+
 // cloneURLFromStep extracts the repository URL from a "git clone ..." step.
 // It skips flags so "git clone --depth 1 <url> ." resolves correctly, unlike
 // blindly taking the third field.
@@ -277,21 +291,45 @@ func cloneURLFromStep(step string) string {
 	if len(fields) < 3 || fields[0] != "git" || fields[1] != "clone" {
 		return ""
 	}
+
+	var positional []string
 	for i := 2; i < len(fields); i++ {
 		f := fields[i]
 		if strings.HasPrefix(f, "-") {
-			// --depth 1 style flags consume the next field.
-			if f == "--depth" || f == "-b" || f == "--branch" || f == "-o" || f == "--origin" {
+			if cloneValueFlags[f] {
 				i++
 			}
 			continue
 		}
-		if f == "." {
-			continue
+		positional = append(positional, f)
+	}
+
+	// "git clone <repo> [<dir>]" makes the repository the first positional,
+	// but a value-taking flag the list above does not know leaves its value in
+	// front of it. Something that is recognisably a URL therefore wins, and the
+	// positional order decides only when nothing looks like one.
+	for _, f := range positional {
+		if looksLikeCloneURL(f) {
+			return f
 		}
-		return f
+	}
+	for _, f := range positional {
+		if f != "." {
+			return f
+		}
 	}
 	return ""
+}
+
+// looksLikeCloneURL reports whether f is recognisably a repository location:
+// either it carries a scheme, or it is the scp-style "git@host:path" form.
+func looksLikeCloneURL(f string) bool {
+	if strings.Contains(f, "://") {
+		return true
+	}
+	at := strings.Index(f, "@")
+	colon := strings.Index(f, ":")
+	return at > 0 && colon > at+1
 }
 
 // Matches reports whether the package matches a free-text query.

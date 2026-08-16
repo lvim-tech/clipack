@@ -42,15 +42,34 @@ type RegistryConfig struct {
 	// RegistryRepoURL is optional and redundant: resolveRepo derives
 	// owner/repo from either field, so URL alone is enough. Kept because
 	// existing configurations carry it, omitted from new ones.
-	RegistryRepoURL string        `yaml:"registryRepoURL,omitempty"`
-	Token           string        `yaml:"token,omitempty"`
-	Branch          string        `yaml:"branch"`
-	UpdateInterval  time.Duration `yaml:"update_interval"`
+	RegistryRepoURL string `yaml:"registryRepoURL,omitempty"`
+	// Token is an optional override. The token normally comes from the
+	// environment (see RegistryToken) so the secret need not sit in the file;
+	// a value here still wins when someone deliberately writes one.
+	Token          string        `yaml:"token,omitempty"`
+	Branch         string        `yaml:"branch"`
+	UpdateInterval time.Duration `yaml:"update_interval"`
+}
+
+// RegistryToken returns the token to authenticate registry requests with.
+// A token written in config.yaml wins; otherwise it falls back to the GH_TOKEN
+// and then GITHUB_TOKEN environment variables. That keeps a private registry
+// reachable without the secret ever touching the config file — e.g. a shell
+// helper that decrypts the token from a password store into GH_TOKEN for the
+// session. Empty means anonymous, which is all a public registry needs.
+func (c *Config) RegistryToken() string {
+	if c.Registry.Token != "" {
+		return c.Registry.Token
+	}
+	if t := os.Getenv("GH_TOKEN"); t != "" {
+		return t
+	}
+	return os.Getenv("GITHUB_TOKEN")
 }
 
 // RegistryHelp is the instruction printed whenever no registry is configured.
-// One field, one example — registryRepoURL is derived, and the token is only
-// needed for a private repository.
+// One field, one example — registryRepoURL is derived, and a private registry
+// is authenticated from the environment rather than a token written to the file.
 func RegistryHelp() string {
 	path, err := ConfigPath()
 	if err != nil {
@@ -63,9 +82,14 @@ Name one in %s:
     registry:
         url: https://github.com/<owner>/<repo>.git
         branch: main
-        # token: <personal access token>   # only for a private repository
 
-A registry is a git repository with an index.yaml listing package definitions.`, path)
+A registry is a git repository with an index.yaml listing package definitions.
+
+For a private registry, export a token instead of writing it to the file:
+
+    export GH_TOKEN=<personal access token>   # GITHUB_TOKEN is also read
+
+(a token under registry.token still works as an override).`, path)
 }
 
 // PathsConfig holds the configuration for various paths used in the application.

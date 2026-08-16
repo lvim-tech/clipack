@@ -235,7 +235,6 @@ registry:
     registryRepoURL: https://api.github.com/repos/lvim-tech/clipack-registry/contents
     branch: main
     update_interval: 24h
-    # token: ghp_…            # only needed for a private registry
 
 paths:
     base: /home/user/clipack
@@ -260,11 +259,26 @@ theme:
 | `registry.url` | The registry repository. Owner and name are derived from it. |
 | `registry.branch` | Branch to read the registry from. |
 | `registry.update_interval` | How long a cached registry stays fresh. |
-| `registry.token` | Only required for a private registry. An invalid token is ignored — clipack falls back to anonymous access. |
+| `registry.token` | Optional override for a private registry. Normally the token comes from the environment instead (see below), so it need not sit in the file. An invalid token is ignored — clipack falls back to anonymous access. |
 | `options.install_method` | Default for `install`; per-command via `-m`. |
 | `options.cleanup_build` | Whether the build tree is deleted after installing. |
 
 All paths must be absolute.
+
+### A private registry
+
+A private registry needs a token with `repo` scope. Rather than writing the
+secret into `config.yaml`, export it — clipack reads `GH_TOKEN`, then
+`GITHUB_TOKEN`, when `registry.token` is unset:
+
+```sh
+export GH_TOKEN=ghp_…
+```
+
+This keeps the token out of the config file and any backup of it. A common
+setup is a shell helper that decrypts the token from a password store into
+`GH_TOKEN` for the session. A value under `registry.token` still wins when one
+is deliberately set.
 
 ---
 

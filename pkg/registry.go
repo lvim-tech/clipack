@@ -121,9 +121,10 @@ func authFailure(status int) bool {
 
 // fetch performs a GET and, when a token is configured but the request fails in
 // a way that looks credential-related, retries anonymously. Without this an
-// expired token in config.yaml makes every public registry request fail.
+// expired token (in config.yaml or the environment) makes every public registry
+// request fail.
 func fetch(target string, config *cnfg.Config) (*http.Response, error) {
-	token := config.Registry.Token
+	token := config.RegistryToken()
 
 	resp, err := get(target, token)
 	if err != nil {

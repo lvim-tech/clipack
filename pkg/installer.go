@@ -802,21 +802,42 @@ func (in *Installer) installMan(p *Package, paths Paths) []error {
 func (in *Installer) installAdditionalConfig(p *Package, paths Paths) []error {
 	var errs []error
 	for _, ac := range p.Install.AdditionalConfig {
-		dst := filepath.Join(paths.Config, ac.Filename)
+		// The name comes from the registry, so it is contained the same way
+		// every other install input is. filepath.Join alone would CLEAN "../.."
+		// into a real path outside the package's directory: "../../../.bashrc"
+		// would overwrite a file clipack does not own, and a name ending in .sh
+		// would land there executable, in a directory that may be on PATH.
+		// Containment is also what keeps uninstall honest — Remove reclaims
+		// these by deleting paths.Config wholesale, which only reaches them
+		// while they are inside it.
+		dst, err := under(paths.Config, ac.Filename)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("additional config: %w", err))
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			errs = append(errs, fmt.Errorf("creating directory for %s: %w", ac.Filename, err))
 			continue
 		}
 
 		var content []byte
-		if strings.HasPrefix(ac.Content, "http://") || strings.HasPrefix(ac.Content, "https://") {
+		switch {
+		case strings.HasPrefix(ac.Content, "https://"):
 			downloaded, err := utils.DownloadContent(ac.Content)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("downloading %s: %w", ac.Filename, err))
 				continue
 			}
 			content = downloaded
-		} else {
+		case strings.HasPrefix(ac.Content, "http://"):
+			// Plaintext gives anyone on the path between here and the server
+			// the contents of a file that is about to be written to disk, and
+			// written executable when the name ends in .sh. Refusing is louder
+			// than downloading it and hoping.
+			errs = append(errs, fmt.Errorf(
+				"additional config %s: refusing to download over plaintext http, use https", ac.Filename))
+			continue
+		default:
 			content = []byte(ac.Content)
 		}
 

@@ -46,6 +46,12 @@ func EnsureDirectoryExists(path string) error {
 	return os.MkdirAll(path, 0o755)
 }
 
+// maxDownloadBytes bounds a downloaded configuration file. These are dotfiles
+// and shell snippets — kilobytes — so anything past this is a wrong URL or a
+// server that means harm, and without the bound the only way to find out is to
+// read the whole body into memory.
+const maxDownloadBytes = 8 << 20 // 8 MiB
+
 // DownloadContent fetches a URL, rewriting GitHub blob links to raw links.
 func DownloadContent(url string) ([]byte, error) {
 	url = strings.Replace(url, "github.com", "raw.githubusercontent.com", 1)
@@ -61,9 +67,15 @@ func DownloadContent(url string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to download %s: status %d", url, resp.StatusCode)
 	}
 
-	content, err := io.ReadAll(resp.Body)
+	// One byte past the limit is read so that hitting it is distinguishable
+	// from a file that is exactly the maximum size.
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read content: %w", err)
+	}
+	if len(content) > maxDownloadBytes {
+		return nil, fmt.Errorf("%s is larger than the %d byte limit for downloaded content",
+			url, maxDownloadBytes)
 	}
 
 	return content, nil

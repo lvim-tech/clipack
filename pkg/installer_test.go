@@ -262,6 +262,66 @@ func buildablePackage() *Package {
 	}
 }
 
+func TestInstallAdditionalConfigRefusesEscapingFilename(t *testing.T) {
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	p := &Package{
+		Name: "demo",
+		Install: Install{
+			AdditionalConfig: []AdditionalConfig{
+				{Filename: "../../escaped.sh", Content: "echo escaped\n"},
+			},
+		},
+	}
+	paths := in.pathsFor(p.Name)
+	if err := os.MkdirAll(paths.Config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	errs := in.installAdditionalConfig(p, paths)
+	if len(errs) != 1 {
+		t.Fatalf("installAdditionalConfig() errors = %v, want exactly one", errs)
+	}
+
+	// filepath.Join would have cleaned the "../.." into a real path two levels
+	// up — outside anything this package owns, and executable because of the
+	// .sh suffix.
+	escaped := filepath.Join(filepath.Dir(filepath.Dir(paths.Config)), "escaped.sh")
+	if exists(escaped) {
+		t.Errorf("a config file was written outside the package directory: %s", escaped)
+	}
+}
+
+func TestInstallAdditionalConfigRefusesPlaintextHTTP(t *testing.T) {
+	config := testConfig(t)
+	in := NewInstaller(config, nil)
+
+	p := &Package{
+		Name: "demo",
+		Install: Install{
+			AdditionalConfig: []AdditionalConfig{
+				{Filename: "hook.sh", Content: "http://example.com/hook.sh"},
+			},
+		},
+	}
+	paths := in.pathsFor(p.Name)
+	if err := os.MkdirAll(paths.Config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	errs := in.installAdditionalConfig(p, paths)
+	if len(errs) != 1 {
+		t.Fatalf("installAdditionalConfig() errors = %v, want exactly one", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "https") {
+		t.Errorf("error = %v, want it to name https", errs[0])
+	}
+	if exists(filepath.Join(paths.Config, "hook.sh")) {
+		t.Error("a file was written despite the refusal to download it")
+	}
+}
+
 func TestInstallEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the shell syntax under test is POSIX")

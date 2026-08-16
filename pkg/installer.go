@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -762,14 +763,22 @@ func (in *Installer) installConfigs(p *Package, paths Paths) []error {
 	return errs
 }
 
+// manSectionRe matches the section of a man page name: a digit, optionally
+// followed by letters ("3p", "1x"), optionally followed by a compression
+// extension. The section is not simply the last extension — filepath.Ext reads
+// "bat.1.gz" as "gz" and "foo.conf" as "conf", and both would be installed into
+// a section directory man(1) never looks in.
+var manSectionRe = regexp.MustCompile(`\.([0-9][a-z]*)(\.(gz|bz2|xz|zst|lzma|Z))?$`)
+
 // manTarget resolves the destination path for a man page, e.g.
-// "man/man1/bat.1" -> "<man>/man1/bat.1".
+// "man/man1/bat.1" -> "<man>/man1/bat.1" and "doc/bat.1.gz" -> "<man>/man1/bat.1.gz".
 func manTarget(manDir, manPage string) (string, bool) {
-	ext := filepath.Ext(manPage)
-	if len(ext) < 2 {
+	base := filepath.Base(manPage)
+	m := manSectionRe.FindStringSubmatch(base)
+	if m == nil {
 		return "", false
 	}
-	return filepath.Join(manDir, "man"+ext[1:], filepath.Base(manPage)), true
+	return filepath.Join(manDir, "man"+m[1], base), true
 }
 
 func (in *Installer) installMan(p *Package, paths Paths) []error {

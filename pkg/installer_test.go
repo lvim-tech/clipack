@@ -36,8 +36,13 @@ func TestManTarget(t *testing.T) {
 		{"man/man1/duf.1", "/man/man1/duf.1", true},
 		{"docs/bat.5", "/man/man5/bat.5", true},
 		{"share/man/man8/tool.8", "/man/man8/tool.8", true},
-		{"README", "", false}, // no extension, so no section
-		{"noext.", "", false}, // a dot with nothing after it
+		// A compressed page keeps its section: the last extension is not it.
+		{"doc/bat.1.gz", "/man/man1/bat.1.gz", true},
+		{"doc/tool.8.zst", "/man/man8/tool.8.zst", true},
+		{"doc/perlfunc.3p", "/man/man3p/perlfunc.3p", true},
+		{"README", "", false},       // no extension, so no section
+		{"noext.", "", false},       // a dot with nothing after it
+		{"etc/foo.conf", "", false}, // an extension that is not a section
 	}
 
 	for _, tt := range tests {

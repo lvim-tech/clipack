@@ -19,8 +19,35 @@ import (
 // maxParallelFetches bounds concurrent HTTP requests in the per-file fallback.
 const maxParallelFetches = 8
 
-// maxTarballBytes guards against a hostile or corrupt archive.
-const maxTarballBytes = 64 << 20 // 64 MiB
+// Bounds on the registry archive. The compressed limit alone guards nothing:
+// gzip expands, and 64 MiB of a compressible pattern inflates to hundreds of
+// gigabytes, all of it read into memory by the tar reader. So the inflated
+// stream is bounded too, and each retained file separately — a package
+// definition is kilobytes of YAML.
+const (
+	maxTarballBytes     = 64 << 20  // 64 MiB, compressed
+	maxInflatedBytes    = 512 << 20 // 512 MiB, decompressed
+	maxRegistryFileSize = 4 << 20   // 4 MiB per package definition
+)
+
+// limitedReader fails the read once the total passes limit, rather than
+// reporting a truncated stream the way io.LimitReader would: a registry that
+// is too big and a registry that ends early call for different messages.
+type limitedReader struct {
+	r     io.Reader
+	limit int64
+	read  int64
+	what  string
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	l.read += int64(n)
+	if l.read > l.limit {
+		return n, fmt.Errorf("%s exceeds %d bytes", l.what, l.limit)
+	}
+	return n, err
+}
 
 // Hosts the registry is read from. They are variables rather than constants so
 // tests can point them at a local server; nothing else reassigns them.
@@ -179,7 +206,7 @@ func fetchTarball(ref repoRef, config *cnfg.Config) (map[string][]byte, error) {
 	defer gz.Close()
 
 	files := make(map[string][]byte)
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(&limitedReader{r: gz, limit: maxInflatedBytes, what: "registry archive"})
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -199,9 +226,12 @@ func fetchTarball(ref repoRef, config *cnfg.Config) (map[string][]byte, error) {
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
 		}
-		data, err := io.ReadAll(tr)
+		data, err := io.ReadAll(io.LimitReader(tr, maxRegistryFileSize+1))
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", name, err)
+		}
+		if len(data) > maxRegistryFileSize {
+			return nil, fmt.Errorf("%s exceeds %d bytes", name, maxRegistryFileSize)
 		}
 		files[name] = data
 	}

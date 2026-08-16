@@ -370,16 +370,6 @@ func LoadPackageFromBytes(data []byte) (*Package, error) {
 	return &pkg, nil
 }
 
-// LoadPackageFromReader loads a package from an io.Reader.
-func LoadPackageFromReader(r io.Reader) (*Package, error) {
-	var pkg Package
-	decoder := yaml.NewDecoder(r)
-	if err := decoder.Decode(&pkg); err != nil {
-		return nil, err
-	}
-	return &pkg, nil
-}
-
 // CopyFile copies a file from src to dst, preserving the source mode.
 //
 // The write goes to a NEIGHBOUR file and is renamed over the target, and that is not tidiness —

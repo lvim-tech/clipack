@@ -1,6 +1,6 @@
 // Package utils holds small helpers shared across clipack that do not belong to
-// any one subsystem: stdin confirmation, directory creation, downloading a file
-// and truncating a string for display.
+// any one subsystem: stdin confirmation, directory creation and downloading a
+// file.
 package utils
 
 import (
@@ -79,16 +79,4 @@ func DownloadContent(url string) ([]byte, error) {
 	}
 
 	return content, nil
-}
-
-// Truncate shortens s to at most width cells, adding an ellipsis.
-func Truncate(s string, width int) string {
-	runes := []rune(s)
-	if width <= 0 || len(runes) <= width {
-		return s
-	}
-	if width == 1 {
-		return "…"
-	}
-	return string(runes[:width-1]) + "…"
 }

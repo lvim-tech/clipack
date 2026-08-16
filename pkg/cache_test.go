@@ -162,26 +162,6 @@ func TestSaveToCacheLeavesNoTempFiles(t *testing.T) {
 	}
 }
 
-func TestCacheAge(t *testing.T) {
-	config := testConfig(t)
-
-	if _, err := CacheAge(config); err == nil {
-		t.Error("CacheAge() error = nil for a missing cache, want an error")
-	}
-
-	if err := SaveToCache([]*Package{{Name: "bat"}}, config); err != nil {
-		t.Fatal(err)
-	}
-
-	age, err := CacheAge(config)
-	if err != nil {
-		t.Fatalf("CacheAge() error = %v", err)
-	}
-	if age < 0 || age > time.Minute {
-		t.Errorf("CacheAge() = %v, want a small positive duration", age)
-	}
-}
-
 func TestClearCache(t *testing.T) {
 	config := testConfig(t)
 

@@ -4,7 +4,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -286,20 +285,6 @@ post-install:
 	}
 	if want := time.Date(2023, 7, 5, 7, 11, 23, 0, time.UTC); !p.UpdatedAt.Equal(want) {
 		t.Errorf("UpdatedAt = %v, want %v", p.UpdatedAt, want)
-	}
-}
-
-func TestLoadPackageFromReader(t *testing.T) {
-	p, err := LoadPackageFromReader(strings.NewReader("name: bat\nversion: v0.25.0\n"))
-	if err != nil {
-		t.Fatalf("LoadPackageFromReader() error = %v", err)
-	}
-	if p.Name != "bat" || p.Version != "v0.25.0" {
-		t.Errorf("got %+v, want bat v0.25.0", p)
-	}
-
-	if _, err := LoadPackageFromReader(strings.NewReader("name: [unterminated")); err == nil {
-		t.Error("LoadPackageFromReader() error = nil, want a parse error")
 	}
 }
 

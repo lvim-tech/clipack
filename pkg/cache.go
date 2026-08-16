@@ -34,15 +34,6 @@ func GetCacheTimestampFilePath(config *cnfg.Config) string {
 	return filepath.Join(config.Paths.Registry, "cache_timestamp.gob")
 }
 
-// CacheAge returns how long ago the cache was written.
-func CacheAge(config *cnfg.Config) (time.Duration, error) {
-	cache, err := readCache(config)
-	if err != nil {
-		return 0, err
-	}
-	return time.Since(cache.LastUpdated), nil
-}
-
 func readCache(config *cnfg.Config) (*PackageCache, error) {
 	file, err := os.Open(GetCacheFilePath(config))
 	if err != nil {

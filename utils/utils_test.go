@@ -134,39 +134,6 @@ func TestAskForConfirmation(t *testing.T) {
 	}
 }
 
-func TestTruncate(t *testing.T) {
-	tests := []struct {
-		in    string
-		width int
-		want  string
-	}{
-		{"short", 20, "short"},
-		{"exactly ten", 11, "exactly ten"},
-		{"truncate me please", 8, "truncat…"},
-		{"anything", 1, "…"},
-		{"anything", 0, "anything"}, // a non-positive width is left alone
-		{"anything", -5, "anything"},
-		{"", 5, ""},
-	}
-
-	for _, tt := range tests {
-		if got := Truncate(tt.in, tt.width); got != tt.want {
-			t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.width, got, tt.want)
-		}
-	}
-}
-
-func TestTruncateCountsRunesNotBytes(t *testing.T) {
-	// Multi-byte input must be cut on a character boundary, not mid-rune.
-	got := Truncate("българският текст", 6)
-	if runes := []rune(got); len(runes) != 6 {
-		t.Errorf("Truncate() = %q (%d runes), want 6 runes", got, len(runes))
-	}
-	if !strings.HasSuffix(got, "…") {
-		t.Errorf("Truncate() = %q, want an ellipsis", got)
-	}
-}
-
 func TestEnsureDirectoryExists(t *testing.T) {
 	base := t.TempDir()
 	nested := filepath.Join(base, "a", "b", "c")

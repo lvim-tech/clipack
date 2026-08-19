@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -120,7 +119,6 @@ func otherMethod(method string) string {
 type Model struct {
 	config *cnfg.Config
 	keys   keyMap
-	help   help.Model
 
 	// styles is compiled once from the configured theme. Everything the model
 	// renders goes through it, so the whole interface follows config.yaml.
@@ -288,7 +286,6 @@ func NewWithStyles(config *cnfg.Config, styles Styles, themeErr error) Model {
 	m := Model{
 		config:        config,
 		keys:          defaultKeys(),
-		help:          help.New(),
 		styles:        styles,
 		list:          newPackageList(styles),
 		detail:        viewport.New(0, 0),
@@ -435,9 +432,6 @@ func (m *Model) layout() {
 	if available < 20 {
 		available = 20
 	}
-	// Zero means "do not truncate": footer() wraps the help itself, so nothing
-	// falls off the right edge.
-	m.help.Width = 0
 
 	m.footerHeight = lipgloss.Height(m.footer())
 
@@ -480,8 +474,20 @@ func (m *Model) layout() {
 	m.invalidateDetail()
 	m.refreshDetail()
 
+	// The run screen has its own chrome — a shorter header and a one-line hint
+	// footer — so its pane is budgeted against that, not against the browse
+	// header. Sized here rather than assumed, for the same reason the footer
+	// is measured above.
+	logHeight := m.height -
+		lipgloss.Height(m.runHeader()) -
+		lipgloss.Height(m.runFooter()) -
+		paneFrameHeight
+	if logHeight < 4 {
+		logHeight = 4
+	}
+
 	m.logView.Width = available - paneFrameWidth
-	m.logView.Height = bodyHeight
+	m.logView.Height = logHeight
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,7 +1036,6 @@ func (m Model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(keyMsg, m.keys.Help):
 			m.showFullHelp = !m.showFullHelp
-			m.help.ShowAll = m.showFullHelp
 			m.layout()
 			return m, nil
 

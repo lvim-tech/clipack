@@ -364,14 +364,14 @@ func TestHelpToggle(t *testing.T) {
 	m := browseModel(t)
 
 	m = applyMsg(t, m, keyMsg("?"))
-	if !m.showFullHelp || !m.help.ShowAll {
+	if !m.showFullHelp {
 		t.Error("? did not expand the help")
 	}
 	// The footer grows, so the body must shrink to keep the view on screen.
 	expanded := strings.Count(m.View(), "\n")
 
 	m = applyMsg(t, m, keyMsg("?"))
-	if m.showFullHelp || m.help.ShowAll {
+	if m.showFullHelp {
 		t.Error("? did not collapse the help again")
 	}
 
@@ -744,7 +744,7 @@ func TestRegistryLoadedFailure(t *testing.T) {
 	if !strings.Contains(view, "network unreachable") {
 		t.Errorf("view does not show the error:\n%s", view)
 	}
-	if !strings.Contains(view, "press r to retry") {
+	if !strings.Contains(view, "[r] retry") {
 		t.Errorf("view does not offer a retry:\n%s", view)
 	}
 }
@@ -1019,7 +1019,7 @@ func TestInitReturnsACommand(t *testing.T) {
 
 // helpFor renders the collapsed help line for the current state.
 func helpFor(m Model) string {
-	return m.help.View(m.contextualKeys())
+	return m.helpView()
 }
 
 func TestHelpFollowsTheSelection(t *testing.T) {
@@ -1175,7 +1175,7 @@ func TestHelpOffersTheInstallMethodToggle(t *testing.T) {
 	// the key was only in the expanded help. Both keys are listed, and each says
 	// what it will do rather than only that it exists.
 	help := helpFor(m)
-	for _, want := range []string{"m install as commit", "M global: commit"} {
+	for _, want := range []string{"[m] install as commit", "[M] global: commit"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("collapsed help = %q, want it to contain %q", help, want)
 		}

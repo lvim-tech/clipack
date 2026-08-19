@@ -143,8 +143,9 @@ type Icons struct {
 // Theme defaults and the accepted values for each knob.
 const (
 	DefaultThemeName = "default"
-	// Square corners by default. "rounded" is still available, it is just not
-	// what clipack ships with.
+	// Square corners, everywhere: the interface draws right angles only.
+	// "rounded" is still accepted so an old config keeps loading, but it
+	// renders the same as "normal" (see tui.borderStyle).
 	DefaultBorder = "normal"
 	DefaultIcons  = "unicode"
 

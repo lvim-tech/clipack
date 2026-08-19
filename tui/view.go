@@ -53,11 +53,36 @@ func clampHeight(frame string, max int) string {
 	return strings.Join(lines[:max], "\n")
 }
 
+// stickyFrame composes a full-height frame: the header at the top, the footer
+// glued to the bottom edge of the terminal, and the body in the space between.
+// The body is clipped and padded to exactly that space, so only it ever
+// scrolls — the footer can neither be pushed off screen by a tall body nor
+// float up under a short one.
+func (m Model) stickyFrame(header, body, footer string) string {
+	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+	if bodyHeight < 1 {
+		// A terminal shorter than the chrome itself: degrade to a top-anchored
+		// stack and let View's clamp cut the bottom line.
+		return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	}
+
+	lines := strings.Split(body, "\n")
+	if len(lines) > bodyHeight {
+		lines = lines[:bodyHeight]
+	}
+	for len(lines) < bodyHeight {
+		lines = append(lines, "")
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, strings.Join(lines, "\n"), footer)
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
-// viewSetup renders the first-run wizard.
+// viewSetup renders the first-run wizard. The hint line is a footer: it stays
+// on the bottom edge of the terminal, like everywhere else in the interface.
 func (m Model) viewSetup() string {
 	s := m.styles
 
@@ -66,8 +91,10 @@ func (m Model) viewSetup() string {
 		checkbox = s.OK.Render("[x]")
 	}
 
+	header := m.clipStyle().Render(
+		s.Title.Render(" clipack ") + "  " + s.HeaderMeta.Render("first run"))
+
 	body := []string{
-		s.Title.Render(" clipack ") + "  " + s.HeaderMeta.Render("first run"),
 		"",
 	}
 	if m.setupStep == 0 {
@@ -91,8 +118,6 @@ func (m Model) viewSetup() string {
 	body = append(body,
 		"",
 		fmt.Sprintf("%s  add bin/ and man/ to your shell rc file", checkbox),
-		"",
-		s.Muted.Render(m.hint("enter confirm", "tab toggle", "esc quit")),
 	)
 
 	if m.err != nil {
@@ -106,7 +131,9 @@ func (m Model) viewSetup() string {
 		body[i] = wrap.Render(line)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, body...)
+	footer := m.clipStyle().Render(m.hint("enter confirm", "tab toggle", "esc quit"))
+
+	return m.stickyFrame(header, lipgloss.JoinVertical(lipgloss.Left, body...), footer)
 }
 
 // ---------------------------------------------------------------------------
@@ -136,14 +163,13 @@ func (m Model) viewBrowse() string {
 
 	if m.err != nil && len(m.packages) == 0 {
 		wrap := lipgloss.NewStyle().Width(m.contentWidth())
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.header(),
+		body := lipgloss.JoinVertical(lipgloss.Left,
 			"",
 			s.Err.Render("  Could not load the registry"),
 			wrap.Render(s.Muted.Render("  "+m.err.Error())),
-			"",
-			s.Muted.Render("  press r to retry, q to quit"),
 		)
+		return m.stickyFrame(m.header(), body,
+			m.clipStyle().Render(m.hint("r retry", "q quit")))
 	}
 
 	// The focused pane is the one the movement keys drive, so it carries the
@@ -169,11 +195,9 @@ func (m Model) viewBrowse() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.header(),
-		body,
-		m.footer(),
-	)
+	// The footer is pinned to the bottom edge; only the panes between the
+	// header and it ever scroll.
+	return m.stickyFrame(m.header(), body, m.footer())
 }
 
 // header renders the title bar, counters and tab strip.
@@ -230,49 +254,67 @@ func (m Model) header() string {
 		meta += fmt.Sprintf("  %s %s", sep, s.BadgeInstalled.Render(fmt.Sprintf("%d marked", n)))
 	}
 
-	title := lipgloss.JoinHorizontal(lipgloss.Center,
-		s.Title.Render(" clipack "),
-		"  ",
-		s.HeaderMeta.Render(meta),
-	)
-
-	// Every tab carries its count, so how much is behind each one is visible
-	// without switching to it. They are dropped on a narrow terminal, where the
-	// strip would otherwise be clipped and a tab would disappear entirely.
+	// The top bar: the title chip on the left, the tab buttons right beside it.
 	counts := map[tabID]int{
 		tabAll:          total,
 		tabInstalled:    installedCount,
 		tabNotInstalled: total - installedCount,
 		tabUpdates:      updateCount,
 	}
-	showCounts := m.contentWidth() >= 64
-
-	tabs := make([]string, 0, len(tabTitles))
-	for i, name := range tabTitles {
-		label := name
-		if showCounts {
-			label = fmt.Sprintf("%s (%d)", name, counts[tabID(i)])
-		}
-		if tabID(i) == m.tab {
-			tabs = append(tabs, s.TabActive.Render(label))
-		} else {
-			tabs = append(tabs, s.Tab.Render(label))
-		}
-	}
+	chip := s.Title.Render(" clipack ")
+	topBar := chip + " " + m.tabStrip(m.contentWidth()-lipgloss.Width(chip)-1, counts)
 
 	// Clipping is the backstop: whatever the counters and tab labels add up to,
 	// the header can never be wider than the terminal.
 	clip := m.clipStyle()
 
 	lines := []string{
-		clip.Render(title),
-		clip.Render(lipgloss.JoinHorizontal(lipgloss.Bottom, tabs...)),
+		clip.Render(topBar),
+		clip.Render(s.HeaderMeta.Render(meta)),
 	}
 	if notice, ok := m.shellNotice(); ok {
 		lines = append(lines, clip.Render(notice))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// tabStrip draws the tab buttons, narrowing them until they fit rather than
+// letting the strip run off the right edge — a tab that is clipped away is a
+// tab the user does not know exists.
+//
+// Three widths, tried in order: full buttons, each carrying its count; the
+// bare titles with the padding taken away; and finally only the tab you are
+// on, with its position in the strip and the key that moves it.
+func (m Model) tabStrip(avail int, counts map[tabID]int) string {
+	s := m.styles
+
+	full := make([]string, 0, len(tabTitles))
+	tight := make([]string, 0, len(tabTitles))
+	for i, name := range tabTitles {
+		label := fmt.Sprintf("%s (%d)", name, counts[tabID(i)])
+		if tabID(i) == m.tab {
+			full = append(full, s.TabActive.Render(label))
+			// The active tab keeps its button shape in the tight tier: the
+			// background is what marks where you are.
+			tight = append(tight, s.TabActive.Render(name))
+		} else {
+			full = append(full, s.Tab.Render(label))
+			tight = append(tight, s.TabTight.Render(name))
+		}
+	}
+
+	if strip := strings.Join(full, ""); lipgloss.Width(strip) <= avail {
+		return strip
+	}
+	if strip := strings.Join(tight, " "); lipgloss.Width(strip) <= avail {
+		return strip
+	}
+
+	// Nothing else fits. Naming where you are beats a strip cut off at an
+	// arbitrary point, which reads as though the missing tabs do not exist.
+	return s.TabActive.Render(tabTitles[m.tab]) +
+		s.Muted.Render(fmt.Sprintf("  %d/%d  tab moves", int(m.tab)+1, len(tabTitles)))
 }
 
 // shellNotice renders the line that says the shell clipack is running under
@@ -327,13 +369,76 @@ func (m Model) footer() string {
 	// this footer, so a second line simply shortens the body.
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.clipStyle().Render(status),
-		lipgloss.NewStyle().Width(m.contentWidth()).Render(m.help.View(m.contextualKeys())),
+		m.helpView(),
 	)
 }
 
-// hint joins key hints with the theme's separator glyph.
+// helpView renders the contextual key hints as "[key] description" buttons,
+// wrapped on pair boundaries so no key is ever cut off at the right edge.
+func (m Model) helpView() string {
+	keys := m.contextualKeys()
+	bindings := keys.ShortHelp()
+	if m.showFullHelp {
+		bindings = bindings[:0:0]
+		for _, group := range keys.FullHelp() {
+			bindings = append(bindings, group...)
+		}
+	}
+
+	pairs := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		if !binding.Enabled() {
+			continue
+		}
+		h := binding.Help()
+		pairs = append(pairs, m.hintPair(h.Key, h.Desc))
+	}
+	return wrapHints(pairs, m.contentWidth())
+}
+
+// hintPair renders one "[key] label" button: the key bracketed in the accent
+// colour, the description as plain muted text beside it.
+func (m Model) hintPair(key, label string) string {
+	return m.styles.KeyHint.Render("["+key+"]") + " " + m.styles.Muted.Render(label)
+}
+
+// wrapHints lays hint pairs into lines of at most width columns, breaking only
+// between pairs: a hint split mid-pair separates a key from what it does.
+func wrapHints(pairs []string, width int) string {
+	var lines []string
+	current, currentWidth := "", 0
+	for _, pair := range pairs {
+		w := lipgloss.Width(pair)
+		switch {
+		case current == "":
+			current, currentWidth = pair, w
+		case currentWidth+2+w <= width:
+			current += "  " + pair
+			currentWidth += 2 + w
+		default:
+			lines = append(lines, current)
+			current, currentWidth = pair, w
+		}
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// hint renders inline key hints — "esc cancel" becomes "[esc] cancel" — in the
+// same form the footer uses, so every hint in the interface reads the same.
 func (m Model) hint(parts ...string) string {
-	return strings.Join(parts, "  "+m.styles.Icons.Bullet+"  ")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		key, label, found := strings.Cut(part, " ")
+		if !found {
+			out = append(out, m.styles.Muted.Render(part))
+			continue
+		}
+		out = append(out, m.hintPair(key, label))
+	}
+	return strings.Join(out, "  ")
 }
 
 // contentWidth is the width available inside the app's own padding.
@@ -447,7 +552,7 @@ func (m Model) viewConfirm() string {
 		)
 	}
 
-	lines = append(lines, "", s.Muted.Render(m.hint("y confirm", "esc cancel")))
+	lines = append(lines, "", m.hint("y confirm", "esc cancel"))
 
 	dialog := s.Dialog.MaxWidth(m.width - 2).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
@@ -500,7 +605,7 @@ func (m Model) viewConfirmBatch(wrap lipgloss.Style) string {
 				"Configuration directories are deleted and recreated — changes made there are lost.")))
 	}
 
-	lines = append(lines, "", s.Muted.Render(m.hint("y confirm", "esc cancel")))
+	lines = append(lines, "", m.hint("y confirm", "esc cancel"))
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 		s.Dialog.MaxWidth(m.width-2).Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))
@@ -530,8 +635,20 @@ func (m Model) batchLine(entry packageItem) string {
 // Run
 // ---------------------------------------------------------------------------
 
-// viewRun renders the streaming operation log.
+// viewRun renders the streaming operation log between the run header and the
+// hint line pinned to the bottom edge; only the log pane scrolls.
 func (m Model) viewRun() string {
+	body := m.styles.Pane.
+		Width(m.logView.Width + 2).
+		Height(m.logView.Height).
+		Render(m.logView.View())
+
+	return m.stickyFrame(m.runHeader(), body, m.runFooter())
+}
+
+// runHeader renders the title chip and the live indicator of the running
+// operation, plus the blank line that separates them from the log.
+func (m Model) runHeader() string {
 	s := m.styles
 	verb := m.runAction.label()
 
@@ -569,24 +686,23 @@ func (m Model) viewRun() string {
 		indicator = s.OK.Render(fmt.Sprintf("%s %s of %s finished", s.Icons.Done, verb, m.runTarget))
 	}
 
-	// The keys are worth spelling out here: a failed build is exactly when
-	// someone wants the text, and a copy key nobody knows about is no key.
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.clipStyle().Render(lipgloss.JoinHorizontal(lipgloss.Center, s.Title.Render(" clipack "), "  ", indicator)),
+		"",
+	)
+}
+
+// runFooter renders the run screen's hint line. The keys are worth spelling
+// out here: a failed build is exactly when someone wants the text, and a copy
+// key nobody knows about is no key.
+func (m Model) runFooter() string {
 	parts := []string{"↑/↓ scroll", "y copy all", "v/V select"}
 	if m.visual != visualNone {
 		parts = []string{"hjkl move", "y copy selection", "esc cancel"}
 	} else if m.runDone {
 		parts = append(parts, "esc back to list")
 	}
-	hint := s.Muted.Render(m.hint(parts...))
-
-	clip := m.clipStyle()
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		clip.Render(lipgloss.JoinHorizontal(lipgloss.Center, s.Title.Render(" clipack "), "  ", indicator)),
-		"",
-		s.Pane.Width(m.logView.Width+2).Height(m.logView.Height).Render(m.logView.View()),
-		clip.Render(hint),
-	)
+	return m.clipStyle().Render(m.hint(parts...))
 }
 
 // desktopClause mentions the menu entry when the package has one, so a remove

@@ -24,6 +24,9 @@ type Styles struct {
 
 	Tab       lipgloss.Style
 	TabActive lipgloss.Style
+	// TabTight is an inactive tab with the padding taken away, for terminals
+	// too narrow to fit the full strip.
+	TabTight lipgloss.Style
 
 	Pane        lipgloss.Style
 	PaneFocused lipgloss.Style
@@ -41,6 +44,10 @@ type Styles struct {
 	Muted lipgloss.Style
 	Text  lipgloss.Style
 	Step  lipgloss.Style
+
+	// KeyHint paints the bracketed key of a footer hint — "[x]" — so the key
+	// stands out from the plain description beside it.
+	KeyHint lipgloss.Style
 
 	Cursor lipgloss.Style
 	// Selection paints the visual-mode selection and the text cursor in the
@@ -87,8 +94,11 @@ func NewStyles(theme cnfg.Theme) Styles {
 		Title:      bold(fg(bg(lipgloss.NewStyle(), c.Accent), c.TitleFg)).Padding(0, 1),
 		HeaderMeta: setFg(lipgloss.NewStyle(), muted),
 
+		// The active tab is a button: painted like the title chip, only on the
+		// alternate accent so the two are not one long block of the same colour.
 		Tab:       setFg(lipgloss.NewStyle().Padding(0, 2), muted),
-		TabActive: setFg(lipgloss.NewStyle().Padding(0, 2).Bold(true).Underline(true), accentAlt),
+		TabActive: bold(fg(bg(lipgloss.NewStyle().Padding(0, 2), c.AccentAlt), c.TitleFg)),
+		TabTight:  setFg(lipgloss.NewStyle(), muted),
 
 		Pane:        setBorderFg(pane, subtle),
 		PaneFocused: setBorderFg(pane, accent),
@@ -111,6 +121,8 @@ func NewStyles(theme cnfg.Theme) Styles {
 		Text:  setFg(lipgloss.NewStyle(), text),
 		Step:  setFg(lipgloss.NewStyle().Bold(true), accentAlt),
 
+		KeyHint: setFg(lipgloss.NewStyle().Bold(true), accent),
+
 		Cursor: setFg(lipgloss.NewStyle(), accent),
 
 		// Reverse video is the base: it needs no colour at all, so the cursor
@@ -132,6 +144,11 @@ func NewStyles(theme cnfg.Theme) Styles {
 	if c.Success.IsZero() {
 		s.BadgeInstalled = s.BadgeInstalled.Faint(true)
 	}
+	// The active tab is a button by background; with no alternate accent the
+	// background has to come from reverse video, the same way the title does.
+	if c.AccentAlt.IsZero() {
+		s.TabActive = s.TabActive.Reverse(true)
+	}
 	if c.Accent.IsZero() {
 		s.Title = s.Title.Reverse(true)
 		// Focus is normally shown by colouring the border. With no accent
@@ -146,6 +163,7 @@ func NewStyles(theme cnfg.Theme) Styles {
 		s.Muted = s.Muted.Faint(true)
 		s.HeaderMeta = s.HeaderMeta.Faint(true)
 		s.Tab = s.Tab.Faint(true)
+		s.TabTight = s.TabTight.Faint(true)
 		s.DetailKey = s.DetailKey.Faint(true)
 	}
 
@@ -207,18 +225,19 @@ func emphasisBorder(name string) lipgloss.Border {
 	case "hidden", "none":
 		return lipgloss.NormalBorder()
 	default:
-		// rounded and normal are both light box-drawing, so thick reads as a
-		// clear step up from either.
+		// normal is light box-drawing, so thick reads as a clear step up.
 		return lipgloss.ThickBorder()
 	}
 }
 
 // borderStyle maps a theme border name to a lipgloss border. "none" still needs
 // a value here because the caller decides whether to apply it at all.
+//
+// Right angles only: rounded corners were retired by design. The "rounded"
+// value stays accepted so an old config keeps loading — it just draws square,
+// which is also what an unknown name falls back to.
 func borderStyle(name string) lipgloss.Border {
 	switch name {
-	case "normal":
-		return lipgloss.NormalBorder()
 	case "thick":
 		return lipgloss.ThickBorder()
 	case "double":
@@ -228,6 +247,7 @@ func borderStyle(name string) lipgloss.Border {
 	case "none":
 		return lipgloss.HiddenBorder()
 	default:
-		return lipgloss.RoundedBorder()
+		// "normal", "rounded" and anything unrecognised.
+		return lipgloss.NormalBorder()
 	}
 }

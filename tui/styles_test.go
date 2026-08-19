@@ -76,13 +76,15 @@ func TestNewStylesFallsBackToWeightWithoutColor(t *testing.T) {
 
 func TestBorderStyle(t *testing.T) {
 	tests := map[string]lipgloss.Border{
-		"rounded":  lipgloss.RoundedBorder(),
+		// Right angles only: "rounded" stays accepted for old configs, but it
+		// draws square, and so does anything unrecognised.
+		"rounded":  lipgloss.NormalBorder(),
 		"normal":   lipgloss.NormalBorder(),
 		"thick":    lipgloss.ThickBorder(),
 		"double":   lipgloss.DoubleBorder(),
 		"hidden":   lipgloss.HiddenBorder(),
-		"":         lipgloss.RoundedBorder(),
-		"nonsense": lipgloss.RoundedBorder(),
+		"":         lipgloss.NormalBorder(),
+		"nonsense": lipgloss.NormalBorder(),
 	}
 
 	for name, want := range tests {

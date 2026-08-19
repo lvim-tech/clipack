@@ -29,6 +29,7 @@ func testConfig(t *testing.T) *cnfg.Config {
 			Configs:  filepath.Join(base, "configs"),
 			Build:    filepath.Join(base, "build"),
 			Man:      filepath.Join(base, "man"),
+			Expose:   filepath.Join(base, "local", "bin"),
 		},
 		Options: cnfg.OptionsConfig{InstallMethod: pkg.MethodVersion},
 	}

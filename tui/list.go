@@ -21,6 +21,11 @@ type packageItem struct {
 	// broken means the manifest says installed but the binaries or resource
 	// trees it names are not there.
 	broken bool
+	// expose is where this package's binaries stand in the user's own bin
+	// directory. Filled in for the selected package only, by refreshDetail: it
+	// costs a readlink per exposed name and the list redraws on every keystroke,
+	// while the detail pane is the only place it is shown.
+	expose []pkg.ExposeStatus
 }
 
 // hasUpdate reports whether an installed package is behind the registry.

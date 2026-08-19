@@ -100,6 +100,16 @@ type PathsConfig struct {
 	Configs  string `yaml:"configs"`
 	Build    string `yaml:"build"`
 	Man      string `yaml:"man"`
+	// Expose is the directory the exposed binaries are linked into, and it is
+	// the one path here that clipack does not own.
+	//
+	// Bin holds everything clipack builds, which is why it is not meant to be
+	// on PATH: eighty-odd tools built from source have no business landing in
+	// the environment all at once, where they shadow the distribution's and
+	// each other's. Expose is the opposite — a handful of names chosen one at a
+	// time, in a directory that is already on PATH — and a package says which
+	// of its binaries deserve to be there with install.expose.
+	Expose string `yaml:"expose,omitempty"`
 }
 
 // OptionsConfig holds the configuration for various options in the application.
@@ -155,6 +165,18 @@ func DefaultInstallDir() string {
 	return filepath.Join(home, "clipack")
 }
 
+// DefaultExposeDir is where exposed binaries are linked: the directory the XDG
+// base directory specification reserves for a user's own executables, and the
+// one every shell setup already has on PATH. Returns "" when there is no home
+// directory to hang it off, which disables exposing rather than guessing.
+func DefaultExposeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "bin")
+}
+
 // ExpandPath resolves ~ and makes the path absolute.
 func ExpandPath(path string) string {
 	path = strings.TrimSpace(path)
@@ -189,6 +211,9 @@ func NewDefaultConfig(installDir string) *Config {
 			Configs:  filepath.Join(installDir, "configs"),
 			Build:    filepath.Join(installDir, "build"),
 			Man:      filepath.Join(installDir, "man"),
+			// Outside installDir on purpose: this one is the user's own bin
+			// directory, not a directory clipack manages.
+			Expose: DefaultExposeDir(),
 		},
 		Options: OptionsConfig{
 			AutoSymlink:   true,
@@ -235,6 +260,10 @@ func (c *Config) EnsureDirs() error {
 }
 
 // Dirs lists the managed directories.
+//
+// Paths.Expose is deliberately not among them: it belongs to the user, and a
+// clipack that has exposed nothing has no business creating it. It is created,
+// once, by the first link that goes into it.
 func (c *Config) Dirs() []string {
 	return []string{c.Paths.Registry, c.Paths.Bin, c.Paths.Configs, c.Paths.Build, c.Paths.Man}
 }
@@ -281,6 +310,22 @@ func validateConfig(config *Config) error {
 	}
 	if config.Options.InstallMethod == "" {
 		config.Options.InstallMethod = "version"
+	}
+
+	// Filled in rather than demanded: every configuration written before
+	// install.expose existed leaves it out, and the answer for those is the
+	// same default a fresh one gets. "~/.local/bin" is accepted here because
+	// this is the one path a user is likely to type by hand.
+	if config.Paths.Expose == "" {
+		config.Paths.Expose = DefaultExposeDir()
+	} else if strings.HasPrefix(config.Paths.Expose, "~") {
+		// Only the tilde is resolved. Making a relative path absolute would
+		// resolve it against whatever directory clipack happened to be started
+		// in, which is not a location anyone meant to write down.
+		config.Paths.Expose = ExpandPath(config.Paths.Expose)
+	}
+	if config.Paths.Expose != "" && !filepath.IsAbs(config.Paths.Expose) {
+		return fmt.Errorf("path %q must be absolute, got %q", "expose", config.Paths.Expose)
 	}
 
 	named := map[string]string{
@@ -360,6 +405,10 @@ func UpdateConfig() error {
 	if existing, err := LoadConfig(); err == nil {
 		config.Registry = existing.Registry
 		config.Options = existing.Options
+		// Every other path is derived from the new installation directory;
+		// this one is not derived from it at all, so repointing the install
+		// tree must not drag a customised expose directory along with it.
+		config.Paths.Expose = existing.Paths.Expose
 	}
 
 	if err := config.Save(); err != nil {

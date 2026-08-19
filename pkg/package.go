@@ -51,10 +51,26 @@ type Source struct {
 
 // Install holds the installation steps and related data.
 type Install struct {
-	Source           Source             `yaml:"source,omitempty"`
-	Environment      map[string]string  `yaml:"environment,omitempty"`
-	Steps            []string           `yaml:"steps,omitempty"`
-	Binaries         []string           `yaml:"binaries,omitempty"`
+	Source      Source            `yaml:"source,omitempty"`
+	Environment map[string]string `yaml:"environment,omitempty"`
+	Steps       []string          `yaml:"steps,omitempty"`
+	Binaries    []string          `yaml:"binaries,omitempty"`
+	// Expose names the binaries that earn a symlink in the user's own bin
+	// directory (paths.expose, ~/.local/bin by default).
+	//
+	// The bin directory clipack installs into is deliberately not on PATH, so
+	// eighty tools built from source do not all appear in the environment at
+	// once — which is a decision about the environment, not about any one
+	// package. Expose is where a package says which of its binaries are worth
+	// the exception: a shell's tmux, a launcher, a formatter another program
+	// calls by name. Absent, nothing is linked, which is what almost every
+	// entry wants.
+	//
+	// Names are the binaries as they land in bin/, i.e. the base name of an
+	// install.binaries path. A name the package does not install is reported
+	// rather than skipped: it is a typo that would otherwise be invisible
+	// until someone wondered why the command was not there.
+	Expose           []string           `yaml:"expose,omitempty"`
 	Resources        []Resource         `yaml:"resources,omitempty"`
 	Desktop          []DesktopEntry     `yaml:"desktop,omitempty"`
 	Configs          []string           `yaml:"configs,omitempty"`
@@ -245,6 +261,18 @@ type Package struct {
 	Install       Install      `yaml:"install"`
 	PostInstall   PostInstall  `yaml:"post-install,omitempty"`
 	InstallMethod string       `yaml:"install_method,omitempty"`
+	// Exposed and Unexposed are local state, not registry data: they record the
+	// decisions `clipack expose` and `clipack unexpose` made about this
+	// installation. They sit here, beside InstallMethod, because the manifest
+	// written into configs/<name>/ is where clipack already keeps what it knows
+	// about an install and the registry does not — and because a rebuild reads
+	// it, which is what carries an ad-hoc link across an update.
+	//
+	// Exposed adds to install.expose; Unexposed subtracts from it. The second
+	// list is what makes unexposing a binary the registry entry declares stick:
+	// without it the next rebuild would put the link straight back.
+	Exposed   []string `yaml:"exposed,omitempty"`
+	Unexposed []string `yaml:"unexposed,omitempty"`
 }
 
 // Ref returns the identifier this package is pinned to for the given method.

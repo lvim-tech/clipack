@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1203,5 +1205,49 @@ func TestStartupFrameNeverExceedsTheTerminal(t *testing.T) {
 		if got := lipgloss.Height(m.View()); got > 24 {
 			t.Errorf("width %d: the frame is %d lines on a 24-line terminal", width, got)
 		}
+	}
+}
+
+// TestDetailReportsExposedLinks checks the seam between the model and the
+// detail pane: the pane draws what it is given, and this is what fills it in.
+func TestDetailReportsExposedLinks(t *testing.T) {
+	config := testConfig(t)
+	m := New(config)
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	p := &pkg.Package{
+		Name:        "tmux",
+		Version:     "3.5a",
+		Description: "A terminal multiplexer",
+		Install:     pkg.Install{Binaries: []string{"tmux"}, Expose: []string{"tmux"}},
+	}
+	// Installed, and its binary and link in place.
+	if err := os.MkdirAll(config.Paths.Expose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(config.Paths.Bin, "tmux")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(binary, filepath.Join(config.Paths.Expose, "tmux")); err != nil {
+		t.Fatal(err)
+	}
+
+	m = applyMsg(t, m, registryLoadedMsg{
+		packages:  []*pkg.Package{p},
+		installed: map[string]*pkg.Package{"tmux": p},
+	})
+
+	entry, ok := m.selected()
+	if !ok {
+		t.Fatal("nothing is selected")
+	}
+	statuses := m.exposeStatuses(entry)
+	if len(statuses) != 1 || statuses[0].State != pkg.ExposeLinked {
+		t.Fatalf("exposeStatuses() = %+v, want one linked entry", statuses)
+	}
+
+	if !strings.Contains(m.detail.View(), "Exposed") {
+		t.Errorf("the detail pane does not mention the exposed link:\n%s", m.detail.View())
 	}
 }

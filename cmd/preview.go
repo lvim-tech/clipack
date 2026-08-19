@@ -69,6 +69,20 @@ var previewCmd = &cobra.Command{
 			fmt.Printf("available_ref: %s\n", packageInfo.Ref(method))
 		}
 
+		// What of it is reachable as a command, which the registry record above
+		// cannot say: install.expose names the candidates, the manifest adds
+		// whatever was exposed by hand, and only the disk says whether the link
+		// is there and whether anything shadows it.
+		if statuses := pkg.ExposeStatuses(config, installed); len(statuses) > 0 {
+			fmt.Println("exposed:")
+			for _, st := range statuses {
+				fmt.Printf("  %s: %s\n", st.Name, st.Link)
+				if problem := st.Problem(); problem != "" {
+					fmt.Printf("    warning: %s\n", problem)
+				}
+			}
+		}
+
 		return nil
 	},
 }

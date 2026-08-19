@@ -37,6 +37,11 @@ On first run clipack asks where to keep its files and offers to add `bin/` and
 
 The configuration itself lives at `~/.config/clipack/config.yaml`.
 
+`bin/` does not have to be on PATH. Eighty tools built from source all appearing
+in the environment at once is rarely what anyone wants — so a package can name
+the few of its binaries that deserve to be reachable, and clipack links those
+into `~/.local/bin`. See [expose](#expose).
+
 ---
 
 ## The interface
@@ -183,6 +188,38 @@ clipack preview bat                 # the full registry record as YAML
 clipack preview bat -f
 ```
 
+### expose
+
+```sh
+clipack expose                      # what is exposed right now, as a table
+clipack expose tmux                 # link every binary the package installs
+clipack expose tmux tmux            # link one binary by name
+clipack unexpose tmux               # remove the links again
+clipack unexpose tmux tmux          # remove one
+```
+
+`bin/` holds everything clipack has ever built, which is exactly why it is not
+meant to be on PATH: putting eighty programs into the environment at once
+shadows the distribution's tools, and does it silently. Exposing grants
+visibility one name at a time — a symlink in `paths.expose` (`~/.local/bin` by
+default, which is already on PATH).
+
+Most of it needs no command at all: a package that declares `install.expose` is
+linked when it is installed, relinked when it is updated, and unlinked when it
+is removed. `clipack expose` is for the local exception the registry does not
+know about — the choice is written into the package's manifest, so a later
+rebuild keeps it.
+
+Nothing is ever taken over. A name already held by a file, or by a link pointing
+somewhere else, is left where it is and reported; a link that already points at
+the right binary — made by hand, before there was a command for it — is adopted
+without a word; a link into `bin/` that has gone stale is repointed. Removing a
+package removes only the links that point at its own binaries.
+
+Two things make a link useless, and both are reported rather than left to be
+discovered: another program of the same name earlier on PATH, and an expose
+directory that is not on PATH at all.
+
 ### add-executables-path
 
 ```sh
@@ -243,6 +280,7 @@ paths:
     configs: /home/user/clipack/configs
     build: /home/user/clipack/build
     man: /home/user/clipack/man
+    expose: /home/user/.local/bin
 
 options:
     auto_symlink: true
@@ -262,8 +300,9 @@ theme:
 | `registry.token` | Optional override for a private registry. Normally the token comes from the environment instead (see below), so it need not sit in the file. An invalid token is ignored — clipack falls back to anonymous access. |
 | `options.install_method` | Default for `install`; per-command via `-m`. |
 | `options.cleanup_build` | Whether the build tree is deleted after installing. |
+| `paths.expose` | Where exposed binaries are linked. Defaults to `~/.local/bin`; it is the one path clipack does not own, and it is created by the first link rather than up front. See [expose](#expose). |
 
-All paths must be absolute.
+All paths must be absolute. `paths.expose` also accepts a leading `~`.
 
 ### A private registry
 
@@ -427,6 +466,7 @@ install:
 | `install.source.url` | Preferred source of the clone URL. |
 | `install.steps` | Shell commands, run in order inside the build directory. |
 | `install.binaries` | Paths, relative to the build directory, copied into `bin/`. |
+| `install.expose` | Optional. The binaries — by the name they have in `bin/` — that get a symlink in the user's own bin directory (`paths.expose`, `~/.local/bin` by default). Absent, nothing is linked, which is what almost every entry wants. A name the package does not install is reported rather than skipped. See below. |
 | `install.resources` | Directory trees a program needs beside its binary, as `source` (relative to the build directory) and `target` (relative to `base`). Recorded in the manifest, so uninstalling removes them. See below. |
 | `install.desktop` | Menu entries a graphical program ships, as `source` (a `.desktop` file relative to the build directory), optional `icon`, `name` and `env`. Installed into the user's application directory. See below. |
 | `install.configs` | Files copied from the build tree into `configs/<name>/`. |
@@ -435,6 +475,28 @@ install:
 | `install.setup` | A shell script clipack **runs once**, after the install completes — for linking a theme into `~/.config` and other one-off arrangements. Failure is a warning, not an error. See below. |
 | `install.environment` | Extra environment variables for the build. |
 | `post-install.scripts` | Scripts written into `bin/` and made executable. |
+
+**Expose**
+
+`bin/` is not on PATH, so installing a package does not put its commands into
+the environment. `install.expose` is where an entry says which of its binaries
+are worth the exception — the ones another program calls by name, or the one
+command the package really is:
+
+```yaml
+    binaries:
+        - tmux
+    expose:
+        - tmux
+```
+
+The names are the binaries as they land in `bin/`, i.e. the base name of an
+`install.binaries` path (`target/release/vivid` → `vivid`); post-install scripts
+can be named too. Leave the field out and nothing is linked.
+
+The user can add to that set locally with `clipack expose <package> <binary>`
+and subtract from it with `clipack unexpose`, without editing the registry: both
+are recorded in the installed manifest, so a rebuild reproduces them.
 
 **Resources**
 
@@ -598,7 +660,10 @@ network hiccup cannot make packages disappear for a day.
 Installing a package builds it in `build/<name>/`, copies the declared artifacts
 into place, and writes the resolved package definition to
 `configs/<name>/package.yaml`. That manifest is what `list`, `update` and
-`remove` read to know what is installed and what it was pinned to.
+`remove` read to know what is installed and what it was pinned to. It also
+carries the decisions the registry knows nothing about — the method the package
+was pinned with, and the binaries `expose` and `unexpose` added or withdrew by
+hand — which is what lets a rebuild reproduce them.
 
 ---
 

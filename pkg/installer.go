@@ -127,6 +127,10 @@ type Paths struct {
 	Config string
 	Build  string
 	Man    string
+	// Expose is the user's own bin directory, where the binaries a package
+	// declares in install.expose are linked. Empty disables exposing rather
+	// than defaulting to a directory nobody named.
+	Expose string
 }
 
 func (in *Installer) pathsFor(name string) Paths {
@@ -136,6 +140,7 @@ func (in *Installer) pathsFor(name string) Paths {
 		Config: filepath.Join(in.Config.Paths.Configs, name),
 		Build:  filepath.Join(in.Config.Paths.Build, name),
 		Man:    in.Config.Paths.Man,
+		Expose: in.Config.Paths.Expose,
 	}
 }
 
@@ -253,6 +258,19 @@ func (in *Installer) install(p *Package, method string, previous *Package) error
 	in.emit(Event{Kind: EventInfo, Package: p.Name,
 		Text: fmt.Sprintf("Installing %s (%s: %s)", p.Name, method, p.Ref(method))})
 
+	// Which binaries were exposed by hand is local state, not registry data, so
+	// it lives in the manifest and has to be carried onto the entry replacing
+	// it. Read here rather than from `previous`, because a reinstall over a
+	// broken install passes no previous and would otherwise forget the links.
+	if prior, err := in.readManifest(paths); err == nil && prior != nil {
+		for _, name := range prior.Exposed {
+			p.Exposed = appendName(p.Exposed, name)
+		}
+		for _, name := range prior.Unexposed {
+			p.Unexposed = appendName(p.Unexposed, name)
+		}
+	}
+
 	if err := os.RemoveAll(paths.Build); err != nil {
 		return fmt.Errorf("removing build directory: %w", err)
 	}
@@ -292,6 +310,11 @@ func (in *Installer) install(p *Package, method string, previous *Package) error
 		errs = append(errs, err)
 	}
 	errs = append(errs, in.installPostInstallScripts(p, paths)...)
+
+	// After the binaries and the post-install scripts, since a link is made to
+	// what they wrote, and after the manifest, which is what records the
+	// ad-hoc part of the set being linked.
+	in.applyExpose(p, paths)
 
 	// After the manifest, so a setup script can read what was installed, and
 	// after the config files it links to have been written.
@@ -360,6 +383,10 @@ func (in *Installer) Remove(p *Package) error {
 // directory, which Remove deletes wholesale.
 func (in *Installer) removeArtifacts(p *Package, paths Paths) {
 	in.removeDesktopEntries(p)
+	// Before the binaries go, though the order does not matter to the check:
+	// what makes a link clipack's to remove is where it points, not whether
+	// the file at the other end is still there.
+	in.removeExposed(p, paths)
 
 	for _, res := range p.Install.Resources {
 		_, dst, err := in.resolveResource(res, paths)

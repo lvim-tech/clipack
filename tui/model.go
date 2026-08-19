@@ -682,6 +682,7 @@ func (m *Model) refreshDetail() {
 		return
 	}
 
+	entry.expose = m.exposeStatuses(entry)
 	m.detailBuf = newDetailBuffer(renderDetail(entry, m.methodOf(entry.pkg.Name), m.detail.Width, m.styles))
 	// A new package means a new buffer, so any selection into the old one is
 	// meaningless.
@@ -689,6 +690,23 @@ func (m *Model) refreshDetail() {
 	m.syncDetail()
 	m.detail.GotoTop()
 	m.detailFor = entry.pkg.Name
+}
+
+// exposeStatuses reports where an entry's exposed binaries stand.
+//
+// The installed manifest is preferred over the registry entry, because it is
+// the one that carries what was exposed by hand. For a package that is not
+// installed the registry entry still answers the useful question — which of its
+// binaries installing it would put on PATH.
+func (m Model) exposeStatuses(entry packageItem) []pkg.ExposeStatus {
+	if m.config == nil {
+		return nil
+	}
+	p := entry.installed
+	if p == nil {
+		p = entry.pkg
+	}
+	return pkg.ExposeStatuses(m.config, p)
 }
 
 // syncDetail redraws the detail viewport from the buffer, cursor and selection.

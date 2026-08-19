@@ -577,3 +577,53 @@ func TestLoadConfigAcceptsOnlyTheLegacyRepoURL(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v, want a legacy config to keep working", err)
 	}
 }
+
+func TestExposePathDefaultsAndExpands(t *testing.T) {
+	home := withHome(t)
+	want := filepath.Join(home, ".local", "bin")
+
+	// A configuration written before install.expose existed says nothing about
+	// where links go, and gets the same answer a fresh one does.
+	config := &Config{
+		Registry: RegistryConfig{URL: "https://github.com/owner/repo.git"},
+		Paths: PathsConfig{
+			Base: "/a", Registry: "/a/r", Bin: "/a/b", Configs: "/a/c", Build: "/a/bu", Man: "/a/m",
+		},
+	}
+	if err := validateConfig(config); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+	if config.Paths.Expose != want {
+		t.Errorf("Paths.Expose = %q, want it defaulted to %q", config.Paths.Expose, want)
+	}
+
+	// It is the one path a user is likely to write by hand, so a tilde is
+	// resolved rather than rejected as "not absolute".
+	config.Paths.Expose = "~/bin"
+	if err := validateConfig(config); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+	if got := filepath.Join(home, "bin"); config.Paths.Expose != got {
+		t.Errorf("Paths.Expose = %q, want %q", config.Paths.Expose, got)
+	}
+
+	config.Paths.Expose = "relative/bin"
+	if err := validateConfig(config); err == nil {
+		t.Error("validateConfig() error = nil, want a relative expose path rejected")
+	}
+}
+
+func TestExposePathIsNotCreatedWithTheManagedTree(t *testing.T) {
+	home := withHome(t)
+	config := NewDefaultConfig(filepath.Join(t.TempDir(), "packages"))
+
+	if err := config.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs() error = %v", err)
+	}
+
+	// The expose directory belongs to the user. clipack creates it with the
+	// first link that goes into it, and not before.
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin")); err == nil {
+		t.Error("EnsureDirs() created the expose directory before anything was exposed")
+	}
+}

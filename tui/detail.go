@@ -98,6 +98,34 @@ func renderDetail(entry packageItem, method string, width int, s Styles) string 
 		}
 	}
 
+	// What of it is reachable as a command. bin/ is not on PATH, so the binary
+	// list above says what was built, and this says what can actually be typed —
+	// including the two ways a link can exist and still not be the program that
+	// runs.
+	if len(entry.expose) > 0 {
+		b.WriteString("\n" + s.DetailTitle.Render("Exposed") + "\n")
+		for _, st := range entry.expose {
+			b.WriteString(s.Muted.Render("  "+s.Icons.Bullet+" ") + st.Name)
+			// The arrow means the link is there. Where it only would be, the
+			// path is shown without one, and the line below says why.
+			arrow := "  "
+			if st.State == pkg.ExposeLinked {
+				arrow = "  → "
+			}
+			b.WriteString(s.Muted.Render(arrow + st.Link))
+			b.WriteString("\n")
+			// A package that is not installed has no links yet, and saying so
+			// for every one of its binaries would be noise rather than news.
+			if entry.installed == nil {
+				continue
+			}
+			if problem := st.Problem(); problem != "" {
+				b.WriteString(wrap.Render(s.Err.Render("    " + problem)))
+				b.WriteString("\n")
+			}
+		}
+	}
+
 	// Resources are the one thing an install puts outside bin/, configs/ and man/,
 	// so where they land is worth showing rather than leaving to be discovered.
 	if len(p.Install.Resources) > 0 {

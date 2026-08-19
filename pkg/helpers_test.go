@@ -29,6 +29,10 @@ func testConfig(t *testing.T) *cnfg.Config {
 			Configs:  filepath.Join(base, "configs"),
 			Build:    filepath.Join(base, "build"),
 			Man:      filepath.Join(base, "man"),
+			// Named so no test can ever reach the real ~/.local/bin. It is
+			// deliberately not created here: EnsureDirs leaves it to the first
+			// link, which is the behaviour under test.
+			Expose: filepath.Join(base, "local", "bin"),
 		},
 		Options: cnfg.OptionsConfig{
 			CleanupBuild:  true,

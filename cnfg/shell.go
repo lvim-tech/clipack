@@ -320,19 +320,40 @@ func CurrentShellStatus(binPath string) (ShellStatus, error) {
 // onPath reports whether dir is one of the directories the current process
 // would search for a program.
 func onPath(dir string) bool {
+	return DirOnPath(dir) >= 0
+}
+
+// DirOnPath returns dir's position in PATH, or -1 when it is not there.
+//
+// The position rather than a yes/no, because "is it findable" is only half the
+// question a linked binary raises: a directory that comes after one holding a
+// program of the same name is on PATH and still never reached.
+func DirOnPath(dir string) int {
 	if dir == "" {
-		return false
+		return -1
 	}
 	want := filepath.Clean(dir)
-	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+	for i, entry := range filepath.SplitList(os.Getenv("PATH")) {
 		if entry == "" {
 			continue
 		}
 		if filepath.Clean(entry) == want {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
+}
+
+// PathDirs returns the directories the current process would search for a
+// program, in order, with the empty entries dropped.
+func PathDirs() []string {
+	var dirs []string
+	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+		if entry != "" {
+			dirs = append(dirs, entry)
+		}
+	}
+	return dirs
 }
 
 // IntegrationFile is the aggregate that sources the shell integration of every

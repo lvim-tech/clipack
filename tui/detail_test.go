@@ -280,3 +280,50 @@ func TestListEntryBadgesABrokenInstall(t *testing.T) {
 		t.Errorf("the list entry does not flag it:\n%s", joined)
 	}
 }
+
+func TestRenderDetailShowsExposedLinks(t *testing.T) {
+	p := &pkg.Package{
+		Name:    "tmux",
+		Install: pkg.Install{Binaries: []string{"tmux"}, Expose: []string{"tmux"}},
+	}
+	entry := packageItem{
+		pkg:       p,
+		installed: p,
+		expose: []pkg.ExposeStatus{{
+			Name:      "tmux",
+			Link:      "/home/user/.local/bin/tmux",
+			Target:    "/home/user/clipack/bin/tmux",
+			Points:    "/home/user/clipack/bin/tmux",
+			State:     pkg.ExposeLinked,
+			Declared:  true,
+			Known:     true,
+			DirOnPath: true,
+		}},
+	}
+
+	out := renderDetail(entry, pkg.MethodVersion, 70, DefaultStyles())
+	for _, want := range []string{"Exposed", "tmux", "/home/user/.local/bin/tmux"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderDetail() is missing %q", want)
+		}
+	}
+
+	// A link that exists and is never reached is the failure exposing is meant
+	// to prevent, so it has to be visible without leaving the pane.
+	entry.expose[0].Shadow = "/usr/bin"
+	out = renderDetail(entry, pkg.MethodVersion, 70, DefaultStyles())
+	if !strings.Contains(out, "shadowed by /usr/bin/tmux") {
+		t.Errorf("renderDetail() does not report the shadowed link:\n%s", out)
+	}
+}
+
+func TestRenderDetailOmitsExposedForAPackageWithout(t *testing.T) {
+	entry := packageItem{pkg: &pkg.Package{
+		Name:    "bat",
+		Install: pkg.Install{Binaries: []string{"target/release/bat"}},
+	}}
+
+	if out := renderDetail(entry, pkg.MethodVersion, 60, DefaultStyles()); strings.Contains(out, "Exposed") {
+		t.Error("renderDetail() shows an Exposed section for a package that exposes nothing")
+	}
+}

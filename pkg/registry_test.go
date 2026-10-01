@@ -408,6 +408,48 @@ func TestFetchRegistryFailsWhenIndexIsUnreachable(t *testing.T) {
 	}
 }
 
+func TestFetchRegistryExplainsARefusedRepository(t *testing.T) {
+	// What GitHub does for a private registry: 404 to everyone without access,
+	// whether no token was sent or a rejected one.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, "404: Not Found")
+	}))
+	defer server.Close()
+
+	oldRaw, oldCodeload := rawBaseURL, codeloadBaseURL
+	rawBaseURL, codeloadBaseURL = server.URL, server.URL
+	defer func() { rawBaseURL, codeloadBaseURL = oldRaw, oldCodeload }()
+
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	tests := []struct {
+		name  string
+		token string
+		want  []string
+	}{
+		{"no token", "", []string{"HTTP 404", "no token is set", "GH_TOKEN"}},
+		{"rejected token", "expired", []string{"HTTP 404", "registry.token in config.yaml", "rejected"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := testConfig(t)
+			config.Registry.Token = tt.token
+
+			_, err := FetchRegistry(config)
+			if err == nil {
+				t.Fatal("FetchRegistry() error = nil, want the refusal reported")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestRefreshRegistryDoesNotCachePartialFetches(t *testing.T) {
 	// The index lists two packages but only one is served. The old code cached
 	// the partial result, so the missing package vanished for 24 hours.

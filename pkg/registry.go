@@ -165,6 +165,35 @@ func fetch(target string, config *cnfg.Config) (*http.Response, error) {
 	return get(target, "")
 }
 
+// statusError is a request GitHub answered with something other than 200. It
+// is a type so FetchRegistry can tell an unreachable repository apart from a
+// network failure and say what to do about it.
+type statusError struct {
+	URL    string
+	Status int
+	Body   string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("GET %s: status %d: %s", e.URL, e.Status, e.Body)
+}
+
+// registryAccessError explains a registry GitHub refuses to serve. GitHub
+// answers 404 both for a repository that does not exist and for a private one
+// requested without valid credentials, so the bare status reads as "the file
+// is missing" when the usual cause is the token: none set for a private
+// registry, or one that has expired. The message names the repository and
+// where the token came from, because that is what has to be fixed.
+func registryAccessError(ref repoRef, status int, tokenSource string) error {
+	repo := fmt.Sprintf("%s/%s (branch %s)", ref.Owner, ref.Repo, ref.Branch)
+	if tokenSource == "" {
+		return fmt.Errorf("registry %s is not reachable (HTTP %d): no token is set, and a private registry needs one — "+
+			"export GH_TOKEN or GITHUB_TOKEN, or set registry.token in config.yaml", repo, status)
+	}
+	return fmt.Errorf("registry %s is not reachable (HTTP %d): the token from %s was rejected — "+
+		"it is invalid, expired or has no access to the repository", repo, status, tokenSource)
+}
+
 // doGet fetches a URL and returns the whole body.
 func doGet(target string, config *cnfg.Config) ([]byte, error) {
 	resp, err := fetch(target, config)
@@ -175,7 +204,7 @@ func doGet(target string, config *cnfg.Config) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("GET %s: status %d: %s", target, resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &statusError{URL: target, Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 
 	return io.ReadAll(resp.Body)
@@ -353,6 +382,12 @@ func FetchRegistry(config *cnfg.Config) ([]*Package, error) {
 	// Fallback: index + one raw request per package, in parallel.
 	indexData, err := doGet(rawURL(ref, "index.yaml"), config)
 	if err != nil {
+		// Both the archive and the index failed. When it is the repository
+		// that refuses, rather than the network, say so in terms of the token.
+		var se *statusError
+		if errors.As(err, &se) && authFailure(se.Status) {
+			return nil, registryAccessError(ref, se.Status, config.RegistryTokenSource())
+		}
 		return nil, fmt.Errorf("fetching index.yaml: %w", err)
 	}
 

@@ -67,6 +67,22 @@ func (c *Config) RegistryToken() string {
 	return os.Getenv("GITHUB_TOKEN")
 }
 
+// RegistryTokenSource names where RegistryToken found its token, in the same
+// order of precedence, or "" when there is none. An error about a rejected
+// token has to say which one: three places can hold it, and fixing the wrong
+// one changes nothing.
+func (c *Config) RegistryTokenSource() string {
+	switch {
+	case c.Registry.Token != "":
+		return "registry.token in config.yaml"
+	case os.Getenv("GH_TOKEN") != "":
+		return "GH_TOKEN"
+	case os.Getenv("GITHUB_TOKEN") != "":
+		return "GITHUB_TOKEN"
+	}
+	return ""
+}
+
 // RegistryHelp is the instruction printed whenever no registry is configured.
 // One field, one example — registryRepoURL is derived, and a private registry
 // is authenticated from the environment rather than a token written to the file.

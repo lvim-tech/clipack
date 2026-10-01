@@ -585,6 +585,12 @@ func (m Model) handleShellPath(msg shellPathMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleRegistryLoaded(msg registryLoadedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.packages) == 0 {
 		m.err = msg.err
+		// A failed refresh leaves the list it replaced on screen, and that list
+		// looks exactly like a successful one. Say which it is, or the refresh
+		// appears to have worked and simply found nothing new.
+		if msg.refreshed && len(m.packages) > 0 && msg.err != nil {
+			m.err = fmt.Errorf("refresh failed, the list is the one loaded before: %w", msg.err)
+		}
 		m.screen = screenBrowse
 		return m, nil
 	}

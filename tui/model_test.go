@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/lvim-tech/clipack/cnfg"
 	"github.com/lvim-tech/clipack/pkg"
 )
@@ -748,6 +749,31 @@ func TestRegistryLoadedFailure(t *testing.T) {
 	}
 	if !strings.Contains(view, "[r] retry") {
 		t.Errorf("view does not offer a retry:\n%s", view)
+	}
+}
+
+func TestRefreshFailureIsVisibleOverThePreviousList(t *testing.T) {
+	m := browseModel(t)
+	m, _ = applyMsgCmd(t, m, keyMsg("r"))
+
+	// The cause is at the end of the message, past any width the footer has.
+	cause := "status 404: 404: Not Found"
+	m = applyMsg(t, m, registryLoadedMsg{
+		refreshed: true,
+		err:       errors.New("fetching index.yaml: GET https://raw.githubusercontent.com/owner/registry/main/index.yaml: " + cause),
+	})
+
+	if m.screen != screenBrowse {
+		t.Fatalf("screen = %v, want screenBrowse", m.screen)
+	}
+	if len(m.list.Items()) != 3 {
+		t.Errorf("got %d items, want the previous list kept", len(m.list.Items()))
+	}
+	footer := strings.Join(strings.Fields(ansi.Strip(m.footer())), " ")
+	for _, want := range []string{"refresh failed", "404: Not Found"} {
+		if !strings.Contains(footer, want) {
+			t.Errorf("footer does not show %q:\n%s", want, m.footer())
+		}
 	}
 }
 

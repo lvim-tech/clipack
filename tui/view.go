@@ -358,9 +358,12 @@ func (m Model) shellNotice() (string, bool) {
 
 // footer renders the status line and the help line.
 func (m Model) footer() string {
-	status := m.styles.Muted.Render(m.status)
+	status := m.clipStyle().Render(m.styles.Muted.Render(m.status))
 	if m.err != nil {
-		status = m.styles.Err.Render(m.err.Error())
+		// An error wraps instead of being clipped. Its cause sits at the end —
+		// "fetching index.yaml: GET <url>: status 404" — so clipping kept the
+		// part that reads like progress and cut the part that says it failed.
+		status = lipgloss.NewStyle().Width(m.contentWidth()).Render(m.styles.Err.Render(m.err.Error()))
 	}
 
 	// The help wraps rather than being cut at the right edge: a key the user
@@ -368,7 +371,7 @@ func (m Model) footer() string {
 	// line — which is how the registry refresh went missing. layout measures
 	// this footer, so a second line simply shortens the body.
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.clipStyle().Render(status),
+		status,
 		m.helpView(),
 	)
 }
